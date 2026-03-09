@@ -1,0 +1,10 @@
+# Copyright (C) 2025 Robin L. M. Cheung, MBA. All rights reserved.
+
+# Runtime state — not committed; each install creates its own on first run
+context.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
