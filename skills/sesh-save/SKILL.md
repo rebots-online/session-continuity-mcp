@@ -36,10 +36,20 @@ Persist the current session's state to `context.db` so the next session can pick
    )
    ```
 
-3. **Confirm to the user.** Report:
+3. **Regenerate the Project Index (codemap).** The session likely changed files —
+   the PROJECT_INDEX must reflect the current state. Follow the same index generation
+   procedure as `/sesh:briefing` Step 1:
+   - Run parallel searches (code, docs, config, tests, scripts)
+   - Extract metadata (entry points, modules, API surface, dependencies)
+   - Write both `PROJECT_INDEX.md` and `PROJECT_INDEX.json` as a matched pair
+   - Verify parity (same generated date, same facts, both in project root)
+   - Keep PROJECT_INDEX.md under 5KB (token-efficient session primer)
+
+4. **Confirm to the user.** Report:
    - Summary was saved
    - The session_id it was linked to
    - How many files/entities were recorded
+   - Project index was refreshed
 
 ## Summary structure (first line = title)
 

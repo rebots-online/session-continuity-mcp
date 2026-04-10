@@ -175,26 +175,31 @@ from scratch, the agent receives:
  │                    session_briefing() returns:                   │
  ├─────────────────────────────────────────────────────────────────┤
  │                                                                  │
- │  1. RECENT GIT HISTORY         What actually changed on disk     │
+ │  1. PROJECT INDEX (codemap)     Token-efficient structural map   │
+ │     (PROJECT_INDEX.md/.json     of the codebase: modules, entry  │
+ │      matched pair)              points, dependencies (~3K tokens │
+ │                                 vs ~58K for full codebase read)  │
+ │                                                                  │
+ │  2. RECENT GIT HISTORY         What actually changed on disk     │
  │     (last 10 commits, branch,   (authoritative, not recalled)    │
  │      dirty status)                                               │
  │                                                                  │
- │  2. CHECKLIST STATUS            Single source of truth for       │
+ │  3. CHECKLIST STATUS            Single source of truth for       │
  │     (parsed with four-state     what's done, in-progress,        │
  │      markers: [ ] [/] [X] ✅)    pending, blocked                │
  │                                                                  │
- │  3. PRIOR SESSION INTENTS       What other sessions claimed      │
+ │  4. PRIOR SESSION INTENTS       What other sessions claimed      │
  │     (incomplete intents with    they would do (collision          │
  │      file lists)                detection)                       │
  │                                                                  │
- │  4. SAVED SESSION SUMMARIES     Narrative context: decisions,    │
+ │  5. SAVED SESSION SUMMARIES     Narrative context: decisions,    │
  │     (from save_session_summary) gotchas, in-progress state       │
  │                                                                  │
- │  5. PIECES LTM HISTORY         OS-level activity capture         │
+ │  6. PIECES LTM HISTORY         OS-level activity capture         │
  │     (optional, from Pieces      (window titles, auto-captured)   │
  │      for Developers)                                             │
  │                                                                  │
- │  6. ENTITY REGISTRY             What functions/classes/types      │
+ │  7. ENTITY REGISTRY             What functions/classes/types      │
  │     (name → file:line map)      exist and where they live        │
  │                                                                  │
  └─────────────────────────────────────────────────────────────────┘

@@ -4,12 +4,21 @@ This project uses `context-mcp` for cross-session AI continuity. The MCP server
 must be configured in your AI tool (see `session-continuity-mcp/examples/` for
 config files per tool).
 
+### Session guard (proactive — non-negotiable)
+
+If you are responding in a session where `session_briefing` has **not yet been called**,
+**stop what you are doing and call it NOW** before reading files, making plans, or
+writing code. A session without a briefing is flying blind — every action risks
+duplicating or contradicting prior work. This guard is self-enforcing: the agent must
+check, not the user.
+
 ### Mandatory session protocol
 
-1. **SESSION START** -- Call `session_briefing("<PROJECT_NAME>")` FIRST, before
-   reading any files or making any plans. The briefing returns: git state,
-   CHECKLIST status, prior session intents, saved session summaries, Pieces LTM
-   history, and the entity registry. This replaces "explore the codebase from
+1. **SESSION START** -- Regenerate `PROJECT_INDEX.md` + `PROJECT_INDEX.json` (the
+   token-efficient codemap), then call `session_briefing("<PROJECT_NAME>")` BEFORE
+   reading any files or making any plans. The briefing returns: the codemap, git
+   state, CHECKLIST status, prior session intents, saved session summaries, Pieces
+   LTM history, and the entity registry. This replaces "explore the codebase from
    scratch."
 
 2. **BEFORE CODING** -- Call `record_session_intent("<PROJECT_NAME>", "<what you
@@ -20,7 +29,8 @@ config files per tool).
    named entity (function, class, endpoint, type). Call `mark_checklist_item()`
    as you complete CHECKLIST.md tasks.
 
-4. **SAVE CONTINUOUSLY** -- Call `save_session_summary()` proactively:
+4. **SAVE CONTINUOUSLY** -- Regenerate the PROJECT_INDEX pair, then call
+   `save_session_summary()` proactively:
    - After completing a major milestone or CHECKLIST section
    - Every 3-5 significant code changes
    - Before any risky or long-running operation
@@ -30,15 +40,19 @@ config files per tool).
    The cost of saving too often is zero. The cost of not saving is starting from
    scratch.
 
-5. **SESSION END** -- Call `save_session_summary()` with a full structured
-   summary, THEN call `complete_session_intent("<PROJECT_NAME>",
-   "<session_id>", outcome="<what was accomplished>")`.
+5. **SESSION END** -- Regenerate the PROJECT_INDEX pair, call
+   `save_session_summary()` with a full structured summary, THEN call
+   `complete_session_intent("<PROJECT_NAME>", "<session_id>",
+   outcome="<what was accomplished>")`.
 
 ### Anti-circular-programming architecture
 
 The session protocol works in concert with a strict architecture pipeline:
 
 ```
+PROJECT_INDEX.md/.json (token-efficient codemap: what files/modules/entry points exist)
+       |
+       v
 ARCHITECTURE.md (entity table: what exists, where, signatures)
        |
        v

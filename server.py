@@ -368,6 +368,47 @@ def tool_session_briefing(project_name: str) -> str:
         lines.append(f"⚠️ Project '{project_name}' not in registry. Use register_project tool.")
     lines.append("")
 
+    # ── 1b. Project Index (token-efficient codemap) ──
+    lines.append("## Project Index (codemap)")
+    if root and root.exists():
+        idx_md = root / "PROJECT_INDEX.md"
+        idx_json = root / "PROJECT_INDEX.json"
+        if idx_md.exists():
+            try:
+                idx_content = idx_md.read_text(encoding="utf-8")
+                # Cap at 6KB to stay token-efficient (the whole point of the index)
+                if len(idx_content) > 6000:
+                    idx_content = idx_content[:6000] + "\n\n_(truncated — full index in PROJECT_INDEX.md)_"
+                lines.append(idx_content)
+                # Check parity: warn if JSON sibling is missing or stale
+                if not idx_json.exists():
+                    lines.append("⚠️ `PROJECT_INDEX.json` missing — index pair incomplete. Regenerate with `generate_project_index`.")
+                else:
+                    try:
+                        idx_data = json.loads(idx_json.read_text(encoding="utf-8"))
+                        json_date = idx_data.get("meta", {}).get("generated", "")
+                        # Extract date from markdown header (line like "Generated: 2026-04-10")
+                        md_date_match = re.search(r"Generated:\s*(\S+)", idx_content[:500])
+                        md_date = md_date_match.group(1) if md_date_match else ""
+                        if json_date and md_date and json_date != md_date:
+                            lines.append(f"⚠️ Index pair date mismatch: MD={md_date}, JSON={json_date}. Regenerate.")
+                    except Exception:
+                        pass
+            except Exception as e:
+                lines.append(f"_(error reading PROJECT_INDEX.md: {e})_")
+        else:
+            lines.append(
+                "⚠️ No `PROJECT_INDEX.md` found. Generate the codemap to prevent shallow spelunking.\n"
+                "The agent should generate PROJECT_INDEX.md + PROJECT_INDEX.json as a matched pair:\n"
+                "- Scan project structure (code, docs, config, tests, scripts)\n"
+                "- Identify entry points, core modules, API surface, dependencies\n"
+                "- Keep index < 5KB for token efficiency (~3K tokens vs ~58K for full codebase read)\n"
+                "- Both files in project root with matching timestamps"
+            )
+    else:
+        lines.append("_(project root not found)_")
+    lines.append("")
+
     # ── 2. Recent git log ──
     lines.append("## Recent Git History (last 10 commits)")
     if root and root.exists():
