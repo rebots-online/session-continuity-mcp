@@ -27,7 +27,7 @@ Add to `~/.claude/mcp.json` (global) or `<project>/.mcp.json` (project-scoped):
   "mcpServers": {
     "context": {
       "command": "python3",
-      "args": ["/home/robin/Antigravity/tools/context-mcp/server.py"]
+      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
     }
   }
 }
@@ -42,7 +42,7 @@ Add to `~/.claude/mcp.json` (global) or `<project>/.mcp.json` (project-scoped):
   "mcpServers": {
     "context": {
       "command": "python3",
-      "args": ["/home/robin/Antigravity/tools/context-mcp/server.py"]
+      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
     }
   }
 }
@@ -58,7 +58,7 @@ Add to `~/.claude/mcp.json` (global) or `<project>/.mcp.json` (project-scoped):
     "context": {
       "type": "stdio",
       "command": "python3",
-      "args": ["/home/robin/Antigravity/tools/context-mcp/server.py"]
+      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
     }
   }
 }
@@ -73,7 +73,7 @@ Add to your tool's MCP config (consult tool docs for exact path):
   "mcpServers": {
     "context": {
       "command": "python3",
-      "args": ["/home/robin/Antigravity/tools/context-mcp/server.py"]
+      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
     }
   }
 }

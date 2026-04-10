@@ -139,7 +139,7 @@ CREATE TABLE checklist_cache (
   "mcpServers": {
     "context": {
       "command": "python3",
-      "args": ["/home/robin/Antigravity/tools/context-mcp/server.py"]
+      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
     }
   }
 }
@@ -151,7 +151,7 @@ CREATE TABLE checklist_cache (
   "mcpServers": {
     "context": {
       "command": "python3",
-      "args": ["/home/robin/Antigravity/tools/context-mcp/server.py"]
+      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
     }
   }
 }

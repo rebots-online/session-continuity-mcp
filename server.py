@@ -44,6 +44,15 @@ DEFAULT_PROJECT_ROOTS = {
     "jsonic":          Path.home() / "Antigravity/jsonic",
     "proxmoxlify":     Path.home() / "Antigravity/proxmoxlify",
     "meccaquest-worldplay": Path.home() / "Antigravity/meccaquest-worldplay",
+    "excallmdraw":     Path.home() / "github/excallmdraw",
+}
+
+# Default project keyword variants — seeded into project_keywords table on init
+DEFAULT_PROJECT_KEYWORDS = {
+    "HelloWord":   ["sanctissimissa", "liturgical", "helloword", "hello word"],
+    "EnZIME":      ["enzyme", "enzime"],
+    "jsonic":      ["jsonic"],
+    "excallmdraw": ["excallmdraw", "exa-llm-draw", "excalidraw"],
 }
 
 # ── DB init ────────────────────────────────────────────────────────────────────
@@ -87,6 +96,12 @@ def init_context_db(db: sqlite3.Connection) -> None:
             root_path  TEXT NOT NULL,
             added_at   TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS project_keywords (
+            project  TEXT NOT NULL,
+            keyword  TEXT NOT NULL,
+            PRIMARY KEY (project, keyword)
+        );
     """)
     # Seed known projects
     now = _now()
@@ -95,6 +110,13 @@ def init_context_db(db: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO project_registry (name, root_path, added_at) VALUES (?,?,?)",
             (name, str(path), now)
         )
+    # Seed project keyword variants
+    for project, keywords in DEFAULT_PROJECT_KEYWORDS.items():
+        for kw in keywords:
+            db.execute(
+                "INSERT OR IGNORE INTO project_keywords (project, keyword) VALUES (?,?)",
+                (project, kw)
+            )
     db.commit()
 
 
@@ -170,8 +192,8 @@ def _parse_checklist(root: Path) -> list[dict]:
             if line.startswith("#"):
                 section = line.lstrip("#").strip()
                 continue
-            # Checkbox line
-            m = re.match(r"^\s*[-*]\s+\[([ xX~>])\]\s+(.*)", line)
+            # Checkbox line — supports [ ] [x] [X] [~] [>] [/] markers
+            m = re.match(r"^\s*[-*]\s+\[([ xX~>/])\]\s+(.*)", line)
             if m:
                 marker = m.group(1)
                 text = m.group(2).strip()
@@ -179,7 +201,7 @@ def _parse_checklist(root: Path) -> list[dict]:
                     status = "done"
                 elif marker == "~":
                     status = "blocked"
-                elif marker == ">":
+                elif marker in (">", "/"):
                     status = "in_progress"
                 else:
                     status = "pending"
@@ -191,6 +213,18 @@ def _parse_checklist(root: Path) -> list[dict]:
                     "status": status,
                     "raw_line": line,
                 })
+            # ✅ prefix lines — verified/tested state (per CLAUDE.md four-state system)
+            elif line.strip().startswith("✅"):
+                text = re.sub(r"^✅\s*", "", line.strip())
+                if text:
+                    item_idx += 1
+                    items.append({
+                        "id": f"{section[:20].replace(' ','_')}_{item_idx}",
+                        "section": section,
+                        "text": text,
+                        "status": "verified",
+                        "raw_line": line,
+                    })
 
     return items
 
@@ -267,17 +301,15 @@ def _pieces_recent_sessions(project_name: str, n: int = 5) -> list[dict]:
 
 
 def _project_keywords(project_name: str, text: str) -> bool:
-    """Loose keyword match for project name variants."""
-    variants = {
-        "HelloWord": ["sanctissimissa", "liturgical", "helloword", "hello word"],
-        "EnZIME":    ["enzyme", "enzime"],
-        "jsonic":    ["jsonic"],
-    }
+    """Loose keyword match for project name variants (database-driven)."""
+    ctx_db = open_context_db()
+    rows = ctx_db.execute(
+        "SELECT keyword FROM project_keywords WHERE project = ?",
+        (project_name,)
+    ).fetchall()
+    ctx_db.close()
     text_lower = text.lower()
-    for kw in variants.get(project_name, []):
-        if kw in text_lower:
-            return True
-    return False
+    return any(row["keyword"] in text_lower for row in rows)
 
 
 def _pieces_search_summaries(project_name: str, query: str) -> list[dict]:
@@ -356,7 +388,8 @@ def tool_session_briefing(project_name: str) -> str:
         in_prog   = [i for i in checklist_items if i["status"] == "in_progress"]
         blocked   = [i for i in checklist_items if i["status"] == "blocked"]
         done      = [i for i in checklist_items if i["status"] == "done"]
-        lines.append(f"**Total**: {len(checklist_items)} items | ✅ {len(done)} done | 🔄 {len(in_prog)} in-progress | 🚧 {len(blocked)} blocked | ⏳ {len(pending)} pending")
+        verified  = [i for i in checklist_items if i["status"] == "verified"]
+        lines.append(f"**Total**: {len(checklist_items)} items | ✅ {len(verified)} verified | ☑️ {len(done)} done | 🔄 {len(in_prog)} in-progress | 🚧 {len(blocked)} blocked | ⏳ {len(pending)} pending")
         lines.append("")
         if in_prog:
             lines.append("### 🔄 In Progress")
@@ -459,6 +492,7 @@ def tool_get_checklist(project_name: str) -> str:
         "checklist_path": str(root / "CHECKLIST.md"),
         "total": len(items),
         "by_status": {
+            "verified":    [i for i in items if i["status"] == "verified"],
             "done":        [i for i in items if i["status"] == "done"],
             "in_progress": [i for i in items if i["status"] == "in_progress"],
             "blocked":     [i for i in items if i["status"] == "blocked"],
@@ -473,7 +507,7 @@ def tool_get_checklist(project_name: str) -> str:
 
 
 def tool_mark_checklist_item(project_name: str, item_text: str, status: str, note: str = "") -> str:
-    valid_statuses = {"pending", "in_progress", "done", "blocked"}
+    valid_statuses = {"pending", "in_progress", "done", "blocked", "verified"}
     if status not in valid_statuses:
         return json.dumps({"error": f"Invalid status '{status}'. Must be one of: {sorted(valid_statuses)}"})
 
@@ -684,6 +718,28 @@ def tool_register_project(project_name: str, root_path: str) -> str:
     })
 
 
+def tool_add_project_keyword(project_name: str, keyword: str) -> str:
+    """Add a keyword variant for a project (used for Pieces session matching)."""
+    ctx_db = open_context_db()
+    ctx_db.execute(
+        "INSERT OR IGNORE INTO project_keywords (project, keyword) VALUES (?,?)",
+        (project_name, keyword.lower())
+    )
+    ctx_db.commit()
+    # Return all keywords for this project
+    rows = ctx_db.execute(
+        "SELECT keyword FROM project_keywords WHERE project = ?",
+        (project_name,)
+    ).fetchall()
+    ctx_db.close()
+    return json.dumps({
+        "ok": True,
+        "project": project_name,
+        "keyword_added": keyword.lower(),
+        "all_keywords": [r["keyword"] for r in rows],
+    })
+
+
 def tool_list_projects() -> str:
     ctx_db = open_context_db()
     rows = ctx_db.execute(
@@ -744,7 +800,7 @@ TOOLS = [
             "properties": {
                 "project_name": {"type": "string"},
                 "item_text":    {"type": "string", "description": "Text of the checklist item"},
-                "status":       {"type": "string", "enum": ["pending", "in_progress", "done", "blocked"]},
+                "status":       {"type": "string", "enum": ["pending", "in_progress", "done", "blocked", "verified"]},
                 "note":         {"type": "string", "description": "Optional note about the status change"},
             },
             "required": ["project_name", "item_text", "status"]
@@ -864,6 +920,21 @@ TOOLS = [
         },
     },
     {
+        "name": "add_project_keyword",
+        "description": (
+            "Add a keyword variant for a project. Keywords are used to match Pieces session "
+            "summaries and events to projects (e.g., alternate names, abbreviations)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_name": {"type": "string", "description": "Project name"},
+                "keyword":      {"type": "string", "description": "Keyword variant (case-insensitive)"},
+            },
+            "required": ["project_name", "keyword"]
+        },
+    },
+    {
         "name": "list_projects",
         "description": "List all registered projects and whether their root directories exist on disk.",
         "inputSchema": {
@@ -928,6 +999,11 @@ def dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
             return tool_register_project(
                 arguments["project_name"],
                 arguments["root_path"],
+            )
+        elif name == "add_project_keyword":
+            return tool_add_project_keyword(
+                arguments["project_name"],
+                arguments["keyword"],
             )
         elif name == "list_projects":
             return tool_list_projects()
