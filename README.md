@@ -83,13 +83,14 @@ gemini mcp add -s user context-mcp python3 <INSTALL_PATH>/session-continuity-mcp
 
 ## Skills (Claude Code)
 
-Three skills are included for the `/sesh:` command namespace:
+Four skills are included for the `/sesh:` command namespace:
 
 | Skill | Trigger | Purpose |
 |-------|---------|---------|
 | `/sesh:briefing` | Session start | Calls `session_briefing`, summarizes context |
 | `/sesh:intent` | Before coding | Calls `record_session_intent`, checks for file conflicts |
-| `/sesh:done` | Session end | Marks checklist items, registers entities, completes intent |
+| `/sesh:save` | Milestones, checkpoints, pre-compaction | Calls `save_session_summary`, persists context |
+| `/sesh:done` | Session end | Saves summary, marks checklist items, registers entities, completes intent |
 
 ### Install skills
 
@@ -108,6 +109,7 @@ Copy `examples/CLAUDE.md.snippet` into any project's `CLAUDE.md` to instruct all
 | Tool | Purpose |
 |------|---------|
 | `session_briefing(project_name)` | **PRIMARY** — full context dump for a new session |
+| `save_session_summary(project, summary, ...)` | **PERSIST** — save session context before exit or at milestones |
 | `get_checklist(project_name)` | Parse CHECKLIST.md into structured items with status |
 | `mark_checklist_item(project, text, status, note)` | Update item status |
 | `record_session_intent(project, intent, files, session_id)` | Declare what you're doing |
@@ -138,7 +140,7 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
 ```
 1. SESSION START
    └─ session_briefing("my-project")
-      → See git history, CHECKLIST, prior intents, entity map
+      → See git history, CHECKLIST, prior intents, saved summaries, entity map
 
 2. BEFORE CODING
    └─ record_session_intent("my-project", "What I will do", files=["..."])
@@ -147,10 +149,66 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
 3. DURING WORK
    └─ register_entity() for new functions/classes/endpoints
    └─ mark_checklist_item() as items complete
+   └─ save_session_summary() after milestones or when context may be lost
 
 4. SESSION END
+   └─ save_session_summary("my-project", "Full structured summary", ...)
    └─ complete_session_intent("my-project", session_id, outcome="...")
+      → Always save BEFORE completing intent (summary is critical, intent is nice-to-have)
 ```
+
+## Anti-Circular-Programming Architecture
+
+The "coding in circles" problem has a specific root cause: a new session lacks the
+vocabulary, decisions, and state of previous sessions, so it re-derives everything
+from scratch -- often differently. This protocol breaks the cycle with a reinforcing
+pipeline:
+
+```
+ARCHITECTURE.md          ← Entity table: what exists, where, key signatures
+       │
+       ▼
+CHECKLIST.md             ← Tasks cite entities by exact name (no ambiguity)
+       │
+       ▼
+Entity Registry          ← register_entity() keeps the map current as code changes
+       │
+       ▼
+Session Summaries        ← save_session_summary() persists narrative context
+       │
+       ▼
+session_briefing()       ← Returns ALL of the above to the next session
+```
+
+### Why each layer matters
+
+- **Architecture defines the vocabulary.** Entity names, types, file locations,
+  and key signatures form a shared language. Without this, two sessions may call
+  the same concept by different names and create parallel implementations.
+
+- **Checklist uses that vocabulary.** Each task cites entities by exact name from
+  the architecture's entity table. A task that says "implement the thing" without
+  specifying which entities, files, and signatures is incomplete -- it leaves room
+  for the next session to invent its own interpretation.
+
+- **Entity registry keeps vocabulary current.** As implementation proceeds, entities
+  move, get renamed, or gain new signatures. `register_entity()` updates the map so
+  the next session doesn't chase stale references.
+
+- **Session summaries capture the narrative.** Decisions made, gotchas discovered,
+  partially-implemented features, blocked items. Without this, a partially-built
+  feature is *worse* than nothing -- the next session sees broken stubs and invents
+  new ones alongside them.
+
+### The checkpoint rule
+
+**Any checkpoint without persisted session context is Circular Programming Express.**
+
+If your AI tool auto-saves, checkpoints, compacts context, or triggers any state
+persistence mechanism, the session protocol's `save_session_summary()` must also
+fire. A checkpoint that captures code state but not session context creates exactly
+the condition this protocol exists to prevent: the next session sees partially-written
+code with no record of what was intended, what was decided, or what comes next.
 
 ## Data Sources
 
@@ -159,7 +217,7 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
   - Never uses OCR fields — too noisy
   - Override path with `PIECES_DB_PATH` env var
 - **context.db** (read-write, created on first run)
-  - Tables: `session_intents`, `entity_registry`, `checklist_cache`, `project_registry`, `project_keywords`
+  - Tables: `session_intents`, `session_summaries`, `entity_registry`, `checklist_cache`, `project_registry`, `project_keywords`
 - **git** — authoritative file state (subprocess)
 - **CHECKLIST.md** — single source of truth for what needs to be done
 

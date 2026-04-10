@@ -100,6 +100,17 @@ def init_context_db(db: sqlite3.Connection) -> None:
             keyword  TEXT NOT NULL,
             PRIMARY KEY (project, keyword)
         );
+
+        CREATE TABLE IF NOT EXISTS session_summaries (
+            id           INTEGER PRIMARY KEY,
+            project      TEXT    NOT NULL,
+            session_id   TEXT,
+            summary      TEXT    NOT NULL,
+            files_changed TEXT,          -- JSON array
+            entities_registered TEXT,    -- JSON array
+            checklist_progress TEXT,     -- JSON: {done: N, in_progress: N, ...}
+            saved_at     TEXT    NOT NULL
+        );
     """)
     # Seed known projects
     now = _now()
@@ -437,6 +448,37 @@ def tool_session_briefing(project_name: str) -> str:
         lines.append("_(Pieces DB unavailable or no sessions found)_")
     lines.append("")
 
+    # ── 5b. Saved session summaries (from context.db) ──
+    lines.append("## Saved Session Summaries")
+    summaries = ctx_db.execute(
+        "SELECT session_id, summary, files_changed, checklist_progress, saved_at "
+        "FROM session_summaries WHERE project = ? ORDER BY saved_at DESC LIMIT 5",
+        (project_name,)
+    ).fetchall()
+    if summaries:
+        for s in summaries:
+            lines.append(f"### [{s['saved_at'][:16]}] {s['session_id'] or 'unnamed'}")
+            lines.append(s["summary"][:800])
+            if s["files_changed"]:
+                try:
+                    files = json.loads(s["files_changed"])
+                    if files:
+                        lines.append(f"  Files: {', '.join(files[:10])}")
+                except Exception:
+                    pass
+            if s["checklist_progress"]:
+                try:
+                    cp = json.loads(s["checklist_progress"])
+                    parts = [f"{k}: {v}" for k, v in cp.items() if v]
+                    if parts:
+                        lines.append(f"  Progress: {', '.join(parts)}")
+                except Exception:
+                    pass
+            lines.append("")
+    else:
+        lines.append("_(no saved session summaries — use save_session_summary to persist context)_")
+    lines.append("")
+
     # ── 6. Entity registry summary ──
     lines.append("## Named Entity Registry")
     entities = ctx_db.execute(
@@ -467,6 +509,7 @@ def tool_session_briefing(project_name: str) -> str:
     lines.append("- **Record your intent**: Call `record_session_intent` before coding to prevent collisions.")
     lines.append("- **Register entities**: Call `register_entity` after creating/moving functions/classes.")
     lines.append("- **Mark checklist items**: Call `mark_checklist_item` as you complete work.")
+    lines.append("- **Save before exit**: Call `save_session_summary` before ending, after milestones, or when context may be lost (compaction, checkpoint).")
 
     ctx_db.close()
     return "\n".join(lines)
@@ -738,6 +781,45 @@ def tool_add_project_keyword(project_name: str, keyword: str) -> str:
     })
 
 
+def tool_save_session_summary(
+    project_name: str,
+    summary: str,
+    files_changed: list[str] | None = None,
+    entities_registered: list[str] | None = None,
+    checklist_progress: dict | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Save a structured session summary to context.db.
+    This is the primary persistence mechanism for session context when Pieces LTM
+    is not available. Call this before ending a session or when context may be lost."""
+    ctx_db = open_context_db()
+    sid = session_id or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    ctx_db.execute(
+        """INSERT INTO session_summaries
+           (project, session_id, summary, files_changed, entities_registered,
+            checklist_progress, saved_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            project_name,
+            sid,
+            summary,
+            json.dumps(files_changed) if files_changed else None,
+            json.dumps(entities_registered) if entities_registered else None,
+            json.dumps(checklist_progress) if checklist_progress else None,
+            _now(),
+        )
+    )
+    ctx_db.commit()
+    ctx_db.close()
+    return json.dumps({
+        "ok": True,
+        "project": project_name,
+        "session_id": sid,
+        "summary_length": len(summary),
+        "saved_at": _now(),
+    })
+
+
 def tool_list_projects() -> str:
     ctx_db = open_context_db()
     rows = ctx_db.execute(
@@ -940,6 +1022,48 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "save_session_summary",
+        "description": (
+            "Persist a structured session summary to context.db. Call this: "
+            "(1) before ending a session, (2) after completing a major milestone, "
+            "(3) whenever context may be lost (compaction, crash, checkpoint). "
+            "This is the PRIMARY persistence mechanism when Pieces LTM is unavailable. "
+            "Saved summaries are returned by session_briefing at the start of the next session."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_name": {"type": "string", "description": "Project name"},
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "Structured summary: what was done, key decisions made, "
+                        "what's left in-progress, any blockers or gotchas for next session"
+                    ),
+                },
+                "files_changed": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of files created or modified this session",
+                },
+                "entities_registered": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Names of entities registered this session",
+                },
+                "checklist_progress": {
+                    "type": "object",
+                    "description": "Snapshot of checklist counts: {done: N, in_progress: N, pending: N, blocked: N, verified: N}",
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID from record_session_intent (links summary to intent)",
+                },
+            },
+            "required": ["project_name", "summary"],
+        },
+    },
 ]
 
 
@@ -1005,6 +1129,15 @@ def dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
             )
         elif name == "list_projects":
             return tool_list_projects()
+        elif name == "save_session_summary":
+            return tool_save_session_summary(
+                arguments["project_name"],
+                arguments["summary"],
+                arguments.get("files_changed"),
+                arguments.get("entities_registered"),
+                arguments.get("checklist_progress"),
+                arguments.get("session_id"),
+            )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except KeyError as e:

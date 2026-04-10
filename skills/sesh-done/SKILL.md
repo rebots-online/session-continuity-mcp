@@ -39,7 +39,20 @@ Wrap up the current session by completing the session intent, marking checklist 
    )
    ```
 
-4. **Complete the session intent:**
+4. **Save the session summary** (CRITICAL — do this BEFORE completing intent):
+   ```
+   save_session_summary(
+     project_name="<PROJECT_NAME>",
+     summary="<first line = title>\n<what was done, decisions made, in-progress items, blockers, gotchas for next session>",
+     files_changed=["path/to/modified/files"],
+     entities_registered=["EntityName1", "EntityName2"],
+     checklist_progress={"done": N, "in_progress": N, "pending": N, "blocked": N, "verified": N},
+     session_id="<session_id from record_session_intent>"
+   )
+   ```
+   This persists the session narrative to context.db. Without this, the next session starts blind.
+
+5. **Complete the session intent:**
    ```
    complete_session_intent(
      project_name="<PROJECT_NAME>",
@@ -48,9 +61,10 @@ Wrap up the current session by completing the session intent, marking checklist 
    )
    ```
 
-5. **Report to the user.** Summarize:
+6. **Report to the user.** Summarize:
    - Checklist items completed (with state)
    - Entities registered
+   - Session summary saved (confirm it persisted)
    - Any items left in-progress for the next session
    - The session_id and outcome recorded
 
@@ -59,6 +73,12 @@ Wrap up the current session by completing the session intent, marking checklist 
 If `record_session_intent` was never called this session, note this in the outcome and call it retroactively before completing:
 ```
 record_session_intent(project_name="<PROJECT_NAME>", intent="<retroactive description>")
-# then immediately:
+# then:
+save_session_summary(project_name="<PROJECT_NAME>", summary="<full summary>", session_id="<returned id>")
+# then:
 complete_session_intent(project_name="<PROJECT_NAME>", session_id="<returned id>", outcome="<what happened>")
 ```
+
+## Order matters
+
+Always: `save_session_summary` THEN `complete_session_intent`. If the session crashes between the two calls, the summary is already persisted. The intent completion is nice-to-have; the summary is critical.

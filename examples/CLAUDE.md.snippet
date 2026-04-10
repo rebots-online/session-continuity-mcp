@@ -8,8 +8,9 @@ config files per tool).
 
 1. **SESSION START** -- Call `session_briefing("<PROJECT_NAME>")` FIRST, before
    reading any files or making any plans. The briefing returns: git state,
-   CHECKLIST status, prior session intents, Pieces LTM history, and the entity
-   registry. This replaces "explore the codebase from scratch."
+   CHECKLIST status, prior session intents, saved session summaries, Pieces LTM
+   history, and the entity registry. This replaces "explore the codebase from
+   scratch."
 
 2. **BEFORE CODING** -- Call `record_session_intent("<PROJECT_NAME>", "<what you
    will do>", files=["path/one", "path/two"])`. This warns if another session
@@ -19,8 +20,47 @@ config files per tool).
    named entity (function, class, endpoint, type). Call `mark_checklist_item()`
    as you complete CHECKLIST.md tasks.
 
-4. **SESSION END** -- Call `complete_session_intent("<PROJECT_NAME>",
+4. **SAVE CONTINUOUSLY** -- Call `save_session_summary()` proactively:
+   - After completing a major milestone or CHECKLIST section
+   - Every 3-5 significant code changes
+   - Before any risky or long-running operation
+   - When context window is filling up (pre-compaction)
+   - When ANY other checkpoint or save mechanism fires
+   A checkpoint without persisted session context = Circular Programming Express.
+   The cost of saving too often is zero. The cost of not saving is starting from
+   scratch.
+
+5. **SESSION END** -- Call `save_session_summary()` with a full structured
+   summary, THEN call `complete_session_intent("<PROJECT_NAME>",
    "<session_id>", outcome="<what was accomplished>")`.
+
+### Anti-circular-programming architecture
+
+The session protocol works in concert with a strict architecture pipeline:
+
+```
+ARCHITECTURE.md (entity table: what exists, where, signatures)
+       |
+       v
+CHECKLIST.md (tasks cite entities by exact name from entity table)
+       |
+       v
+Entity Registry (register_entity keeps the map current as code changes)
+       |
+       v
+Session Summaries (save_session_summary persists narrative context)
+```
+
+Each layer reinforces the others:
+- **Architecture** defines the vocabulary (entity names, types, locations)
+- **Checklist** uses that vocabulary to define tasks unambiguously
+- **Entity registry** keeps the vocabulary current as implementation proceeds
+- **Session summaries** capture decisions, gotchas, and in-progress state
+
+Without this pipeline, a new session must re-derive everything from scratch --
+which is exactly how "coding in circles" starts. A partially-implemented feature
+without saved context is worse than no implementation at all, because the next
+session will invent new stubs alongside the existing broken ones.
 
 ### Rules
 
@@ -33,3 +73,9 @@ config files per tool).
 - **No silent starts**: Every session must call `session_briefing` first. A
   session that skips the briefing risks reimplementing what a prior session
   already built.
+- **No silent exits**: Every session must call `save_session_summary` before
+  ending. A session that exits without saving leaves the next session blind.
+- **Foreclose flexibility**: CHECKLIST tasks must be specific enough that a
+  coder needs nothing else. If a task says "implement X" without specifying
+  which entities, files, and signatures -- the task is incomplete. Return to
+  architecture phase.
