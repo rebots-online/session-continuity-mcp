@@ -205,10 +205,67 @@ state but not session context creates exactly the condition this protocol preven
 
 ## Current Architecture
 
-session-continuity-mcp currently runs as a **single-file Python server** (stdlib only, no external dependencies) that reads from two data sources:
+session-continuity-mcp currently runs as a **single-file Python server** (stdlib only, no external dependencies) that reads from three data sources:
 
-- **Pieces OS LTM** (read-only) — session history from [Pieces for Developers](https://pieces.app). Optional; the server works without it but `get_recent_sessions` and `search_history` return empty results.
-- **context.db** (read-write SQLite) — session intents, entity registry, checklist cache, project registry, project keywords. Created automatically on first run.
+```
+ AI Tool (Claude Code, Windsurf, Roo, Codex, Gemini)
+     │
+     ▼ MCP stdio (JSON-RPC 2.0)
+ ┌────────────────────────────────────────────────┐
+ │          session-continuity-mcp                 │
+ │          (single Python file, stdlib only)      │
+ ├────────────────────────────────────────────────┤
+ │                                                 │
+ │  context.db (SQLite, read-write)                │
+ │  ├─ session_intents      — what each session    │
+ │  ├─ session_summaries    — narrative context ◄──┼── PRIMARY persistence
+ │  ├─ entity_registry      — name → file:line     │   (Pieces-independent)
+ │  ├─ checklist_cache      — status overlay       │
+ │  ├─ project_registry     — project → root path  │
+ │  └─ project_keywords     — fuzzy matching       │
+ │                                                 │
+ │  Pieces LTM (SQLite, read-only, OPTIONAL)       │
+ │  └─ Reads c2windowTitle + clipboard fields      │
+ │     (OS-level capture, bypasses Pieces API)     │
+ │                                                 │
+ │  git (subprocess, read-only)                    │
+ │  └─ log, branch, status, diff                   │
+ │                                                 │
+ │  CHECKLIST.md (filesystem, read-only parse)     │
+ │  └─ Four-state markers: [ ] [/] [X] ✅          │
+ │                                                 │
+ └────────────────────────────────────────────────┘
+```
+
+### Why Pieces is optional (and bypassed for retrieval)
+
+[Pieces for Developers](https://pieces.app) provides valuable **OS-level context
+capture** — it records window titles (via the OS window manager API) and clipboard
+content (via the OS clipboard API) across every application. These are clean,
+high-fidelity signals that land in a local SQLite database.
+
+However, this server **reads the raw SQLite DB directly** rather than going through
+Pieces' MCP server or API. Here's why:
+
+| Aspect | Pieces API/MCP | Our direct DB read |
+|--------|----------------|-------------------|
+| **Capture quality** | Same underlying data | Same underlying data |
+| **Retrieval quality** | Depends on inference model + VRAM | Raw field access, no inference |
+| **Local inference** | Requires significant VRAM for quality results | N/A — no inference needed |
+| **Pricing dependency** | Cloud models limited on free tier, unlimited on Pro ($18.99/mo) | Zero — reads local files |
+| **Reliability** | MCP queries can return poor results | Direct SQL, deterministic |
+
+The golden goose is the **capture engine**, not the retrieval layer. By reading
+`c2windowTitle` and clipboard fields directly, we get perfect-fidelity session
+history without depending on inference quality, VRAM availability, or pricing
+tier changes.
+
+**Derisking**: `save_session_summary` provides a fully Pieces-independent
+persistence path. Even if Pieces changes their local DB format, gates it behind
+a paid tier, or disappears entirely, all core session continuity features
+continue to work through context.db alone. The [ROADMAP](ROADMAP.md) details the
+planned transition to a self-hosted hybrid Knowledge Graph that replaces Pieces
+capture entirely.
 
 For the planned evolution to a hybrid Knowledge Graph architecture, see [ROADMAP.md](ROADMAP.md).
 
@@ -409,12 +466,15 @@ code with no record of what was intended, what was decided, or what comes next.
 
 ## Data Sources
 
-- **Pieces LTM** (read-only, optional) — session history from Pieces for Developers
-  - Only uses clean fields: `c2windowTitle` (OS API) and clipboard (OS API)
-  - Never uses OCR fields — too noisy
-  - Override path with `PIECES_DB_PATH` env var
-- **context.db** (read-write, created on first run)
+- **context.db** (read-write, created on first run) — **primary persistence, Pieces-independent**
   - Tables: `session_intents`, `session_summaries`, `entity_registry`, `checklist_cache`, `project_registry`, `project_keywords`
+  - `session_summaries` is the main narrative persistence mechanism
+- **Pieces LTM** (read-only, optional) — supplementary session history
+  - Only reads clean OS-level fields: `c2windowTitle` and clipboard
+  - Never uses OCR fields (`c0readable`, `c10 ocrText`) — too noisy
+  - Bypasses Pieces API/MCP entirely (direct SQLite read) for reliability
+  - Override path with `PIECES_DB_PATH` env var
+  - Without Pieces: `get_recent_sessions` and `search_history` return empty; all other tools work normally
 - **git** — authoritative file state (subprocess)
 - **CHECKLIST.md** — single source of truth for what needs to be done
 
