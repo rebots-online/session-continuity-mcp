@@ -2,9 +2,206 @@
 
 > Copyright (C) 2025 Robin L. M. Cheung, MBA. All rights reserved.
 
-Cross-session AI context MCP server — prevents "coding in circles" restarts.
+**Cross-session AI context protocol — prevents "coding in circles" restarts.**
 
-**The problem it solves**: AI sessions start from scratch every time, reimplement things differently, cause within-file divergence, and force the user to restart clean. This server gives every session full context in one call.
+## The Problem: Circular Programming
+
+Every AI coding session starts with amnesia. The agent doesn't know what the last
+session built, what decisions were made, what entities exist, or what's left to do.
+So it re-derives everything from scratch — often differently — creating parallel
+implementations that diverge from the existing codebase.
+
+```
+ Session 1                    Session 2                    Session 3
+ ─────────                    ─────────                    ─────────
+ "Let me explore              "Let me explore              "Let me explore
+  the codebase..."             the codebase..."             the codebase..."
+       │                            │                            │
+       ▼                            ▼                            ▼
+ Creates UserAuth             Creates AuthService           Creates LoginManager
+ in src/auth.ts               in src/services/auth.ts       in lib/auth/index.ts
+       │                            │                            │
+       ▼                            ▼                            ▼
+ "Done! Implemented           "Done! Implemented            "Done! Implemented
+  authentication."             authentication."              authentication."
+```
+
+**Result**: Three incompatible implementations of the same thing. The codebase is
+worse than before any session started. The user must restart clean.
+
+### Why it happens
+
+The root cause is **not** that AI agents are bad at coding. It's that they lack
+three pieces of information that humans carry between sessions automatically:
+
+```
+                    ┌─────────────────────────────────┐
+                    │     INFORMATION GAP              │
+                    ├─────────────────────────────────┤
+                    │                                  │
+                    │  1. What did the last session     │
+                    │     ACTUALLY do? (vs. intended)   │
+                    │                                  │
+                    │  2. What is the canonical state    │
+                    │     of the task list RIGHT NOW?   │
+                    │                                  │
+                    │  3. What named entities exist      │
+                    │     and WHERE are they?            │
+                    │                                  │
+                    └─────────────────────────────────┘
+                                   │
+                                   ▼
+                    ┌─────────────────────────────────┐
+                    │     WITHOUT THIS INFO...         │
+                    ├─────────────────────────────────┤
+                    │                                  │
+                    │  • Agent re-explores from scratch │
+                    │  • Creates new implementations    │
+                    │  • Uses different names/patterns  │
+                    │  • Doesn't know what's "done"     │
+                    │  • Partially builds on top of     │
+                    │    other partial builds            │
+                    │                                  │
+                    └─────────────────────────────────┘
+                                   │
+                                   ▼
+                         CIRCULAR PROGRAMMING
+                    (same work, different results,
+                     compounding divergence)
+```
+
+### The compounding effect
+
+Circular programming gets **worse** over time, not better. Each session that starts
+without context adds another layer of partial, divergent implementation:
+
+```
+ Codebase health over sessions (without continuity):
+
+ Quality
+   ▲
+   │  ●
+   │    ●
+   │      ●            Agent starts fresh,
+   │        ●          creates new stubs
+   │          ●            │
+   │            ●──────────┘
+   │              ●
+   │                ●      New stubs conflict
+   │                  ●    with old stubs
+   │                    ●      │
+   │                      ●────┘
+   │                        ●
+   │                          ●  User forced to
+   │                            ● restart clean
+   └──────────────────────────────────► Sessions
+     1    2    3    4    5    6    7
+```
+
+The worst case is a **partially-implemented feature without saved context**. The next
+session sees broken stubs and invents new ones alongside them. This is worse than no
+implementation at all.
+
+## The Solution: Session Continuity Protocol
+
+This server gives every AI session **full context in one call**. Instead of exploring
+from scratch, the agent receives:
+
+```
+ ┌─────────────────────────────────────────────────────────────────┐
+ │                    session_briefing() returns:                   │
+ ├─────────────────────────────────────────────────────────────────┤
+ │                                                                  │
+ │  1. RECENT GIT HISTORY         What actually changed on disk     │
+ │     (last 10 commits, branch,   (authoritative, not recalled)    │
+ │      dirty status)                                               │
+ │                                                                  │
+ │  2. CHECKLIST STATUS            Single source of truth for       │
+ │     (parsed with four-state     what's done, in-progress,        │
+ │      markers: [ ] [/] [X] ✅)    pending, blocked                │
+ │                                                                  │
+ │  3. PRIOR SESSION INTENTS       What other sessions claimed      │
+ │     (incomplete intents with    they would do (collision          │
+ │      file lists)                detection)                       │
+ │                                                                  │
+ │  4. SAVED SESSION SUMMARIES     Narrative context: decisions,    │
+ │     (from save_session_summary) gotchas, in-progress state       │
+ │                                                                  │
+ │  5. PIECES LTM HISTORY         OS-level activity capture         │
+ │     (optional, from Pieces      (window titles, auto-captured)   │
+ │      for Developers)                                             │
+ │                                                                  │
+ │  6. ENTITY REGISTRY             What functions/classes/types      │
+ │     (name → file:line map)      exist and where they live        │
+ │                                                                  │
+ └─────────────────────────────────────────────────────────────────┘
+```
+
+### The reinforcing pipeline
+
+The protocol works through four reinforcing layers. Each layer feeds into the next,
+and `session_briefing()` returns all of them at once:
+
+```
+ ARCHITECTURE.md ──────► Entity table: what exists, where, signatures
+       │                      │
+       ▼                      ▼
+ CHECKLIST.md ─────────► Tasks cite entities by EXACT NAME
+       │                  (no ambiguity, no room for reinterpretation)
+       │                      │
+       ▼                      ▼
+ Entity Registry ──────► register_entity() keeps the map current
+       │                  as code changes during implementation
+       │                      │
+       ▼                      ▼
+ Session Summaries ────► save_session_summary() persists decisions,
+       │                  gotchas, partially-built state
+       │                      │
+       ▼                      ▼
+ session_briefing() ───► Returns ALL of the above to the next session
+       │                      │
+       └──────────────────────┘
+              CYCLE BROKEN
+       (next session starts with full context,
+        not from scratch)
+```
+
+### Before and after
+
+```
+ WITHOUT session-continuity-mcp:        WITH session-continuity-mcp:
+
+ Session N ends                         Session N ends
+      │                                      │
+      ▼                                      ▼
+ Context vanishes                       save_session_summary()
+      │                                 complete_session_intent()
+      ▼                                      │
+ Session N+1 starts                          ▼
+      │                                 Session N+1 starts
+      ▼                                      │
+ "Let me explore                             ▼
+  the codebase..."                      session_briefing()
+      │                                      │
+      ▼                                      ▼
+ 30 min re-deriving                     "Last session completed P2.1-P2.4,
+ what already exists                     registered 3 entities, P2.5 is
+      │                                  in-progress with a gotcha about
+      ▼                                  the API rate limit. Picking up
+ Builds something                        where it left off."
+ different                                   │
+      │                                      ▼
+      ▼                                 Continues seamlessly
+ DIVERGENCE                             NO DIVERGENCE
+```
+
+### The checkpoint rule
+
+**Any checkpoint without persisted session context is Circular Programming Express.**
+
+If your AI tool auto-saves, compacts context, or checkpoints state, the session
+protocol's `save_session_summary()` must also fire. A checkpoint that captures code
+state but not session context creates exactly the condition this protocol prevents.
 
 ## Current Architecture
 
