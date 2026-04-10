@@ -1,16 +1,10 @@
 {
-  "mcpServers": {
-    "context-mcp": {
-      "command": "python3",
-      "args": ["/home/robin/github/session-continuity-mcp/server.py"],
-      "alwaysAllow": [
-        "session_briefing",
-        "get_checklist",
-        "list_projects",
-        "get_entity_registry",
-        "search_history",
-        "get_recent_sessions"
-      ]
-    }
+  "context-mcp": {
+    "command": "python3",
+    "args": ["<INSTALL_PATH>/session-continuity-mcp/server.py"],
+    "alwaysAllow": [
+      "session_briefing", "get_checklist", "list_projects",
+      "get_entity_registry", "search_history", "get_recent_sessions"
+    ]
   }
 }

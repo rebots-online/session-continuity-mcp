@@ -6,54 +6,55 @@ Cross-session AI context MCP server — prevents "coding in circles" restarts.
 
 **The problem it solves**: AI sessions start from scratch every time, reimplement things differently, cause within-file divergence, and force the user to restart clean. This server gives every session full context in one call.
 
+## Current Architecture
+
+session-continuity-mcp currently runs as a **single-file Python server** (stdlib only, no external dependencies) that reads from two data sources:
+
+- **Pieces OS LTM** (read-only) — session history from [Pieces for Developers](https://pieces.app). Optional; the server works without it but `get_recent_sessions` and `search_history` return empty results.
+- **context.db** (read-write SQLite) — session intents, entity registry, checklist cache, project registry, project keywords. Created automatically on first run.
+
+For the planned evolution to a hybrid Knowledge Graph architecture, see [ROADMAP.md](ROADMAP.md).
+
 ## Quick Start
 
-**Always call `session_briefing` first** at the start of every session in every AI tool.
+```bash
+# 1. Clone the repo
+git clone https://github.com/rebots-online/session-continuity-mcp.git
 
-```
-session_briefing("excallmdraw")
+# 2. Register with your AI tool (see Setup per Tool below)
+
+# 3. Register your project
+register_project("my-project", "/path/to/my-project")
+
+# 4. Call session_briefing at the start of every session
+session_briefing("my-project")
 ```
 
 Returns: recent git history, CHECKLIST status (with four-state markers), incomplete prior session intents, Pieces LTM session history, and the named entity registry.
 
+## Requirements
+
+- **Python 3.10+** (stdlib only — no pip install needed)
+- **Pieces for Developers** (optional) — for LTM session history integration
+- **git** — for repository state queries
+
 ## Setup per Tool
 
-Config examples are in the `examples/` directory. The server name is `context-mcp` everywhere.
+Config examples are in the `examples/` directory. Replace `<INSTALL_PATH>` with the actual path to your clone.
 
 ### Claude Code
 
 ```bash
-claude mcp add context-mcp -s user -- python3 /home/robin/github/session-continuity-mcp/server.py
+claude mcp add context-mcp -s user -- python3 <INSTALL_PATH>/session-continuity-mcp/server.py
 ```
 
-Or add to `~/.claude.json` under `"mcpServers"`:
-
-```json
-{
-  "context-mcp": {
-    "type": "stdio",
-    "command": "python3",
-    "args": ["/home/robin/github/session-continuity-mcp/server.py"]
-  }
-}
-```
+Or add to `~/.claude.json` under `"mcpServers"` — see `examples/claude-code.mcp.json`.
 
 ### Windsurf-next
 
-`~/.codeium/windsurf-next/mcp_config.json`:
+Add to `~/.codeium/windsurf-next/mcp_config.json` — see `examples/windsurf-next.mcp_config.json`.
 
-```json
-{
-  "mcpServers": {
-    "context-mcp": {
-      "command": "python3",
-      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
-    }
-  }
-}
-```
-
-### Roo Coder (VS Code / VS Code Insiders)
+### Roo Coder (VS Code / VS Code Insiders / VSCodium)
 
 Roo stores MCP config in its globalStorage settings:
 
@@ -61,37 +62,24 @@ Roo stores MCP config in its globalStorage settings:
 - **VS Code Insiders**: `~/.config/Code - Insiders/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json`
 - **VSCodium**: `~/.config/VSCodium/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json`
 
-Add to the `"mcpServers"` object:
-
-```json
-{
-  "context-mcp": {
-    "command": "python3",
-    "args": ["/home/robin/github/session-continuity-mcp/server.py"],
-    "alwaysAllow": [
-      "session_briefing", "get_checklist", "list_projects",
-      "get_entity_registry", "search_history", "get_recent_sessions"
-    ]
-  }
-}
-```
+See `examples/roo-coder.mcp_settings.json`. The `alwaysAllow` list auto-approves read-only tools.
 
 ### Codex CLI
 
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.context-mcp]
-enabled = true
-command = "python3"
-args = ["/home/robin/github/session-continuity-mcp/server.py"]
-```
+Add to `~/.codex/config.toml` — see `examples/codex.config.toml`.
 
 ### Gemini CLI
 
 ```bash
-gemini mcp add -s user context-mcp python3 /home/robin/github/session-continuity-mcp/server.py
+gemini mcp add -s user context-mcp python3 <INSTALL_PATH>/session-continuity-mcp/server.py
 ```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PIECES_DB_PATH` | `~/Documents/com.pieces.os/.../db.sqlite3` | Override Pieces OS database location |
+| `CONTEXT_DB_PATH` | `<server dir>/context.db` | Override context database location |
 
 ## Skills (Claude Code)
 
@@ -109,7 +97,7 @@ Three skills are included for the `/sesh:` command namespace:
 ./install-skills.sh
 ```
 
-This symlinks `skills/sesh-*` into `~/.claude/skills/` so they're available in every Claude Code session.
+This symlinks `skills/sesh-*` into `~/.claude/skills/`.
 
 ### CLAUDE.md integration
 
@@ -134,7 +122,7 @@ Copy `examples/CLAUDE.md.snippet` into any project's `CLAUDE.md` to instruct all
 
 ## Checklist Markers (Four-State System)
 
-The checklist parser recognizes all four states from the CLAUDE.md convention:
+The checklist parser recognizes all four states:
 
 | Marker | State | Meaning |
 |--------|-------|---------|
@@ -149,11 +137,11 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
 
 ```
 1. SESSION START
-   └─ session_briefing("ProjectName")
+   └─ session_briefing("my-project")
       → See git history, CHECKLIST, prior intents, entity map
 
 2. BEFORE CODING
-   └─ record_session_intent("ProjectName", "What I will do", files=["..."])
+   └─ record_session_intent("my-project", "What I will do", files=["..."])
       → Warns if another session claimed the same files
 
 3. DURING WORK
@@ -161,29 +149,40 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
    └─ mark_checklist_item() as items complete
 
 4. SESSION END
-   └─ complete_session_intent("ProjectName", session_id, outcome="...")
+   └─ complete_session_intent("my-project", session_id, outcome="...")
 ```
 
 ## Data Sources
 
-- **Pieces LTM** (`~/Documents/.../Pieces/couchbase.cblite2/db.sqlite3`) — read-only
+- **Pieces LTM** (read-only, optional) — session history from Pieces for Developers
   - Only uses clean fields: `c2windowTitle` (OS API) and clipboard (OS API)
-  - Never uses OCR fields — too noisy (character substitutions)
-- **context.db** (same directory as server.py) — read-write, created on first run
+  - Never uses OCR fields — too noisy
+  - Override path with `PIECES_DB_PATH` env var
+- **context.db** (read-write, created on first run)
   - Tables: `session_intents`, `entity_registry`, `checklist_cache`, `project_registry`, `project_keywords`
 - **git** — authoritative file state (subprocess)
 - **CHECKLIST.md** — single source of truth for what needs to be done
 
 ## Project Keywords
 
-Each project can have keyword variants for matching Pieces session summaries. Keywords are stored in the `project_keywords` table and can be added at runtime:
+Each project can have keyword variants for matching Pieces session summaries:
 
 ```
-add_project_keyword("excallmdraw", "exa-llm-draw")
+add_project_keyword("my-project", "myproj")
+add_project_keyword("my-project", "my-proj-v2")
 ```
 
-Default keywords are seeded on first run. Use this when a project has alternate names, abbreviations, or prior iterations that appear in Pieces history.
+Keywords are stored in `project_keywords` table and can be added at runtime or seeded in `DEFAULT_PROJECT_KEYWORDS` in server.py.
 
 ## Critical Rule
 
 **Never create a parallel CHECKLIST.** The single `CHECKLIST.md` in git is the only checklist. Two checklists = competing definitions of "done" = forking = divergence.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the planned evolution from local SQLite + Pieces LTM to a hybrid Knowledge Graph (hKG) architecture.
+
+## License
+
+Copyright (C) 2025 Robin L. M. Cheung, MBA. All rights reserved.
+See [LICENSE](LICENSE) for details.

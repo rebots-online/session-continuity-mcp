@@ -1,4 +1,4 @@
-# Copyright (C) 2025 Robin L. M. Cheung, MBA. All rights reserved.
+# Copyright (c) 2025 Robin L. M. Cheung, MBA. MIT License.
 
 # Runtime state — not committed; each install creates its own on first run
 context.db

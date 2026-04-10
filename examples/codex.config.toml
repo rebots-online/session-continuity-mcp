@@ -1,6 +1,7 @@
 # Add this block to ~/.codex/config.toml
+# Replace <INSTALL_PATH> with the actual path to your clone
 
 [mcp_servers.context-mcp]
 enabled = true
 command = "python3"
-args = ["/home/robin/github/session-continuity-mcp/server.py"]
+args = ["<INSTALL_PATH>/session-continuity-mcp/server.py"]

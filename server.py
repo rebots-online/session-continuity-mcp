@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Copyright (C) 2025 Robin L. M. Cheung, MBA. All rights reserved.
+# Copyright (c) 2025 Robin L. M. Cheung, MBA. MIT License — see LICENSE.
 """
-context-mcp/server.py — MCP stdio server for cross-session AI context
+session-continuity-mcp/server.py — MCP stdio server for cross-session AI context
 
 Solves the "coding in circles" restart problem: every AI session in every
 tool calls session_briefing() first and gets complete context in one call.
@@ -10,7 +10,11 @@ Transport: stdio JSON-RPC 2.0 (MCP protocol)
 Dependencies: stdlib only — json, sqlite3, subprocess, os, sys, re, datetime, pathlib
 
 Usage:
-    python3 /home/robin/Antigravity/tools/context-mcp/server.py
+    python3 /path/to/session-continuity-mcp/server.py
+
+Environment variables:
+    PIECES_DB_PATH  — Override the default Pieces OS database path
+    CONTEXT_DB_PATH — Override the default context.db location (default: alongside server.py)
 
 Add to .mcp.json / mcp_config.json for your tool (see README.md).
 """
@@ -28,32 +32,26 @@ from typing import Any
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 TOOLS_DIR    = Path(__file__).parent
-CONTEXT_DB   = TOOLS_DIR / "context.db"
-PIECES_DB    = Path.home() / "Documents/com.pieces.os/production/Pieces/couchbase.cblite2/db.sqlite3"
+CONTEXT_DB   = Path(os.environ.get("CONTEXT_DB_PATH", str(TOOLS_DIR / "context.db")))
+PIECES_DB    = Path(os.environ.get("PIECES_DB_PATH",
+    str(Path.home() / "Documents/com.pieces.os/production/Pieces/couchbase.cblite2/db.sqlite3")))
 
 # Pieces FTS tables (backslash table names — must use Python sqlite3, not CLI)
 EVENTS_FTS   = r"kv_.workstream\Events::workstream\Events\Full\Text\Search\Index_content"
 SUMMARIES_FTS = r"kv_.workstream\Summaries::workstream\Summaries\Full\Text\Search\Index_content"
 
-# Known project roots — add entries as projects are registered
-DEFAULT_PROJECT_ROOTS = {
-    "HelloWord":       Path.home() / "Antigravity/HelloWord",
-    "EnZIME":          Path.home() / "Antigravity/EnZIME",
-    "BoltMinerYours":  Path.home() / "Antigravity/BoltMinerYours",
-    "omniscribe":      Path.home() / "Antigravity/omniscribe",
-    "jsonic":          Path.home() / "Antigravity/jsonic",
-    "proxmoxlify":     Path.home() / "Antigravity/proxmoxlify",
-    "meccaquest-worldplay": Path.home() / "Antigravity/meccaquest-worldplay",
-    "excallmdraw":     Path.home() / "github/excallmdraw",
-}
+# Known project roots — add your own projects here or use register_project() at runtime.
+# Projects are also persisted in context.db so runtime registrations survive restarts.
+# Example:
+#   "my-project": Path.home() / "code/my-project",
+DEFAULT_PROJECT_ROOTS: dict[str, Path] = {}
 
-# Default project keyword variants — seeded into project_keywords table on init
-DEFAULT_PROJECT_KEYWORDS = {
-    "HelloWord":   ["sanctissimissa", "liturgical", "helloword", "hello word"],
-    "EnZIME":      ["enzyme", "enzime"],
-    "jsonic":      ["jsonic"],
-    "excallmdraw": ["excallmdraw", "exa-llm-draw", "excalidraw"],
-}
+# Default project keyword variants — seeded into project_keywords table on init.
+# Keywords are used to match Pieces LTM session summaries to projects.
+# Add your own or use add_project_keyword() at runtime.
+# Example:
+#   "my-project": ["myproj", "my project", "mp"],
+DEFAULT_PROJECT_KEYWORDS: dict[str, list[str]] = {}
 
 # ── DB init ────────────────────────────────────────────────────────────────────
 
@@ -771,7 +769,7 @@ TOOLS = [
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Project name (e.g., 'HelloWord', 'EnZIME')"
+                    "description": "Project name (as registered with register_project)"
                 }
             },
             "required": ["project_name"]

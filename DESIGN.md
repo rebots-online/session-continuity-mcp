@@ -1,4 +1,4 @@
-# context-mcp — Design Specification
+# session-continuity-mcp — Design Specification
 
 > **Status**: ✅ BUILT — server.py complete and tested 2026-03-09
 > **Priority**: HIGH — this solves the "coding in circles / restart" problem
@@ -79,7 +79,7 @@ Returns everything a new session needs:
 
 ### Pieces DB (READ-ONLY)
 ```python
-PIECES_DB = '/home/robin/Documents/com.pieces.os/production/Pieces/couchbase.cblite2/db.sqlite3'
+PIECES_DB = '~/Documents/com.pieces.os/production/Pieces/couchbase.cblite2/db.sqlite3'  # overridable via PIECES_DB_PATH env var
 EVENTS_FTS = 'kv_.workstream\\Events::workstream\\Events\\Full\\Text\\Search\\Index_content'
 
 # RELIABLE columns:
@@ -129,33 +129,11 @@ CREATE TABLE checklist_cache (
 
 - Transport: stdio (JSON-RPC 2.0)
 - No external dependencies (stdlib only: json, sqlite3, subprocess, os, sys)
-- Works with: Claude Code, Windsurf, VSCode/Roo, Gemini CLI, Codex CLI, Antigravity
+- Works with: Claude Code, Windsurf-next, Roo Coder, Codex CLI, Gemini CLI
 
-## Config Snippets (per tool)
+## Config Snippets
 
-### Claude Code (.mcp.json in project root)
-```json
-{
-  "mcpServers": {
-    "context": {
-      "command": "python3",
-      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
-    }
-  }
-}
-```
-
-### Windsurf (mcp_config.json)
-```json
-{
-  "mcpServers": {
-    "context": {
-      "command": "python3",
-      "args": ["/home/robin/github/session-continuity-mcp/server.py"]
-    }
-  }
-}
-```
+See `examples/` directory for per-tool config files and `README.md` for setup instructions.
 
 ## Implementation Notes
 
