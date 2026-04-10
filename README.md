@@ -536,6 +536,63 @@ The entire session continuity protocol exists to make the **architect** phase
 informed so it can write checklist tasks specific enough that the **coder** phase
 can be deliberately uninformed — and succeed precisely because of it.
 
+### The spaghettification reflex
+
+LLMs have a structural bias toward **adding code around broken code** rather than
+excising it. This isn't a training gap — it's baked into the reward signal:
+
+- **Loss aversion**: deleting 200 lines feels aggressive; wrapping them feels "safe"
+- **Minimal diff bias**: a patch looks smaller than a rewrite, so the model gravitates
+  toward patching — even when the patch creates spaghetti
+- **Sunk cost honoring**: treats existing code as a constraint to work around rather
+  than material to evaluate ("this is here, so there must be a reason")
+
+The result: a stub like `function auth() { return true; }` doesn't get replaced. It
+gets *wrapped* in a compatibility layer, a feature flag, a "legacy" prefix — and now
+you have two broken functions instead of one. This is why entire branches get
+abandoned: it's often faster to start over than to untangle an LLM's "improvements"
+to broken code.
+
+The checklist firewall prevents this directly. A task that says "replace stub at
+lines 42-44 with real implementation" is an explicit **excise** instruction. The coder
+never has to make the judgment call of "should I fix this or rewrite it?" — the
+architect already decided.
+
+### Context contamination ("the messy codebase hypnosis")
+
+This is the most insidious failure mode because it's **invisible** — the output
+*looks like it belongs* because the model has been style-matched to the mess.
+
+LLMs are next-token predictors. The context window literally shapes the probability
+distribution they sample from. Whatever code the model reads before generating output
+biases what it produces:
+
+| Context is full of... | Model output shifts toward... |
+|-----------------------|-------------------------------|
+| Consistent naming (`getUserById`) | Consistent naming |
+| Mixed conventions (`getUserById`, `fetch_user`, `getUsr`) | A 4th naming variant |
+| Clean error handling | Clean error handling |
+| `catch(e) { /* ignore */ }` | More swallowed exceptions |
+| Well-typed interfaces | Typed code |
+| `any`, `as unknown as`, type assertions | More type escape hatches |
+| `// TODO`, `// HACK`, `// FIXME` | Treats placeholders as normal — produces more of them |
+| Stubs returning hardcoded values | Output that looks "complete" but is equally hollow |
+
+After reading 500 lines of inconsistent, stub-filled code, the model's "baseline"
+for what code in this project looks like has been **contaminated**. It will match the
+naming conventions it saw (including the bad ones), replicate the anti-patterns, and
+produce code at the same quality level — regression to the mean of its context.
+
+**This is why "let me explore the codebase first" before coding is actively harmful
+in a messy repo.** The spelunking isn't just wasting tokens — it's poisoning the well.
+Every broken file the agent reads makes its output worse.
+
+The tunnel vision design eliminates this entirely. The coder's context contains
+**only** the CHECKLIST.md task — which was written by the architect in clean,
+precise, unambiguous language. The model's probability distribution is shaped by a
+clean spec, not by the mess it's being asked to fix. The output matches the spec's
+quality, not the codebase's current state.
+
 ## Anti-Circular-Programming Architecture
 
 The "coding in circles" problem has a specific root cause: a new session lacks the
