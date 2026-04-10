@@ -138,12 +138,13 @@ A session that starts without calling `session_briefing` risks:
 
 ## Self-activation (non-negotiable)
 
-This skill must auto-fire on **two** conditions — not just one:
+This skill fires on **two** conditions, with a critical **exception** for the coder phase:
 
 ### Condition 1: No briefing called yet
 If `session_briefing` has NOT been called in this session.
+**Action**: Run this skill immediately.
 
-### Condition 2: Post-compaction amnesia
+### Condition 2: Post-compaction during architect phases (1–3)
 If `session_briefing` WAS called, but context compaction/summarization has since
 evicted the results. **Compaction does not persist tool results into working context.**
 It only preserves a summary that a briefing happened — not the codemap, not the
@@ -154,7 +155,22 @@ CHECKLIST status, entity registry, or session summaries from the briefing — th
 data was evicted. The presence of a conversation summary mentioning "briefing was
 called" is NOT a substitute for the actual data.
 
-### In either case:
+**Action**: Run this skill immediately to reload full context.
+
+### Exception: Post-compaction during coder phase (4)
+If compaction occurs while you are executing CHECKLIST.md tasks, **do NOT re-brief**.
+Your instinct after compaction will be to "get your bearings" by reading around the
+codebase. **That instinct is wrong.** CHECKLIST.md is the compaction firewall — every
+task is self-contained with exact file paths, entity names, signatures, parameters,
+and acceptance criteria.
+
+**Action**: Re-read CHECKLIST.md. Find the task you were on. Put on tunnel vision.
+Continue executing. Do NOT spelunk. Do NOT read architecture docs. Do NOT call
+`session_briefing`. If a CHECKLIST.md task doesn't have enough information to execute,
+that's an architect bug — stop coding and return to architect phase (where you WILL
+need the briefing).
+
+### For conditions 1–2:
 1. **Stop** whatever you are about to do
 2. **Run this skill** immediately — before reading files, before making plans, before writing code
 3. **Then** resume the user's request

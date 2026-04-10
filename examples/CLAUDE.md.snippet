@@ -6,28 +6,31 @@ config files per tool).
 
 ### Session guard (proactive — non-negotiable)
 
-This guard fires on **two** conditions:
+This guard fires on **three** conditions — the response depends on which phase
+you are in:
 
-1. **No briefing called yet** -- `session_briefing` has not been called in this session.
-2. **Post-compaction amnesia** -- `session_briefing` was called earlier, but context
-   compaction/summarization has since evicted the results. You can detect this: if you
-   cannot recall the specific contents of the PROJECT_INDEX, CHECKLIST status, or entity
-   registry from the briefing — the data is gone.
+1. **No briefing called yet** -- `session_briefing` has not been called in this
+   session. **Action**: call `session_briefing` NOW.
 
-In **either** case: **stop what you are doing and call `session_briefing` NOW** before
-reading files, making plans, or writing code. A session without live briefing data is
-flying blind — every action risks duplicating or contradicting prior work.
+2. **Post-compaction during architect phases (1–3)** -- `session_briefing` was
+   called earlier, but context compaction evicted the results. You can detect
+   this: if you cannot recall the specific contents of the PROJECT_INDEX,
+   CHECKLIST status, or entity registry — the data is gone.
+   **Action**: re-call `session_briefing` to reload full context.
+
+3. **Post-compaction during coder phase (4)** -- Compaction occurred while you
+   were executing CHECKLIST.md tasks. Your instinct will be to "get your
+   bearings" by reading around the codebase. **That instinct is wrong.**
+   **Action**: STOP. Do NOT spelunk. Do NOT re-brief. Do NOT read architecture
+   docs. Re-read CHECKLIST.md — find the task you were on — put on tunnel
+   vision — continue executing. CHECKLIST.md is self-contained. It has
+   everything you need. If it doesn't, that's an architect bug, not a reason
+   to start exploring.
 
 This guard is self-enforcing: the agent must check, not the user. Compaction does NOT
-persist session state into working context — it only summarizes that a briefing happened.
-The summary is not a substitute for the data.
-
-**Scope**: This guard protects the **architect phases** (MAP, ARCHITECT, PLAN) where
-the agent needs full context to write correct, self-contained checklist tasks. The
-**coder phase** is compaction-proof by design — CHECKLIST.md tasks are self-contained
-with exact entity names, file paths, signatures, and acceptance criteria. A coder
-reads ONE file (CHECKLIST.md) and needs nothing else. The architect's job is to make
-that true; the session guard's job is to keep the architect informed.
+persist session state into working context — it only summarizes that things happened.
+The summary is not a substitute for the data (conditions 1–2) or the task spec
+(condition 3).
 
 ### Mandatory session protocol
 
@@ -55,8 +58,9 @@ that true; the session guard's job is to keep the architect informed.
    - When ANY other checkpoint or save mechanism fires
    A checkpoint without persisted session context = Circular Programming Express.
    The cost of saving too often is zero. The cost of not saving is starting from
-   scratch. **After compaction occurs**, re-call `session_briefing` to reload the
-   codemap and session state — compaction evicts tool results from working context.
+   scratch. **After compaction occurs**: if in architect phases (1–3), re-call
+   `session_briefing` to reload context. If in coder phase (4), do NOT re-brief —
+   re-read CHECKLIST.md and continue the current task with tunnel vision.
 
 5. **SESSION END** -- Regenerate the PROJECT_INDEX pair, call
    `save_session_summary()` with a full structured summary, THEN call
