@@ -1,0 +1,35 @@
+## Session Continuity (context-mcp)
+
+This project uses `context-mcp` for cross-session AI continuity. The MCP server
+must be configured in your AI tool (see `session-continuity-mcp/examples/` for
+config files per tool).
+
+### Mandatory session protocol
+
+1. **SESSION START** -- Call `session_briefing("<PROJECT_NAME>")` FIRST, before
+   reading any files or making any plans. The briefing returns: git state,
+   CHECKLIST status, prior session intents, Pieces LTM history, and the entity
+   registry. This replaces "explore the codebase from scratch."
+
+2. **BEFORE CODING** -- Call `record_session_intent("<PROJECT_NAME>", "<what you
+   will do>", files=["path/one", "path/two"])`. This warns if another session
+   already claimed those files. Note the returned `session_id`.
+
+3. **DURING WORK** -- Call `register_entity()` after creating or moving any
+   named entity (function, class, endpoint, type). Call `mark_checklist_item()`
+   as you complete CHECKLIST.md tasks.
+
+4. **SESSION END** -- Call `complete_session_intent("<PROJECT_NAME>",
+   "<session_id>", outcome="<what was accomplished>")`.
+
+### Rules
+
+- **Single CHECKLIST**: `CHECKLIST.md` in git is the ONLY checklist. Never
+  create a parallel one.
+- **Four-state markers**: `[ ]` not started, `[/]` in progress, `[X]`
+  implemented, `✅` verified (ran the test, observed the result).
+- **Entity registry**: If you create a function, class, endpoint, or type that
+  other sessions might need to find, register it.
+- **No silent starts**: Every session must call `session_briefing` first. A
+  session that skips the briefing risks reimplementing what a prior session
+  already built.
