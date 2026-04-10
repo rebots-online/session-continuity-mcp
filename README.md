@@ -512,6 +512,30 @@ acceptance criteria. A coder in Phase 4 needs nothing from the briefing — the
 architect's job was to make the checklist complete enough that a coder who wakes
 up with amnesia can still execute correctly.
 
+### Why tunnel vision is a feature, not a workaround
+
+Evicting everything except CHECKLIST.md during coding isn't just surviving
+compaction — it's **better than having full context**:
+
+| | Coder with full context | Coder with only CHECKLIST.md |
+|-|------------------------|------------------------------|
+| **Sees broken prior implementations** | Tries to reconcile or "fix" them | Doesn't know they exist — writes the correct one |
+| **Finds multiple files matching a grep** | Stops to investigate, picks the wrong one | Already told which file and line to edit |
+| **Encounters a stub** | Wonders if it's intentional or broken | Task says "replace stub at line N with..." |
+| **Context budget** | ~50K tokens on architecture + history + spelunking | ~500 tokens on the current task |
+| **Decision fatigue** | "Should I extend this or rewrite?" | No decision to make — task is prescriptive |
+
+The less the coder "knows" about the rest of the codebase, the fewer wrong turns
+it takes. An agent that discovers three broken auth implementations will try to
+reconcile them. An agent that only sees "write `verifyToken(token: string):
+Promise<boolean>` at `src/auth.ts:42`" just writes it. Tunnel vision prevents
+the failure modes (shallow spelunking, misidentification, premature unification)
+that full context actually *causes*.
+
+The entire session continuity protocol exists to make the **architect** phase
+informed so it can write checklist tasks specific enough that the **coder** phase
+can be deliberately uninformed — and succeed precisely because of it.
+
 ## Anti-Circular-Programming Architecture
 
 The "coding in circles" problem has a specific root cause: a new session lacks the
