@@ -207,31 +207,32 @@ from scratch, the agent receives:
 
 ### The reinforcing pipeline
 
-The protocol works through four reinforcing layers. Each layer feeds into the next,
+The protocol works through five reinforcing layers. Each layer feeds into the next,
 and `session_briefing()` returns all of them at once:
 
-```
- ARCHITECTURE.md ──────► Entity table: what exists, where, signatures
-       │                      │
-       ▼                      ▼
- CHECKLIST.md ─────────► Tasks cite entities by EXACT NAME
-       │                  (no ambiguity, no room for reinterpretation)
-       │                      │
-       ▼                      ▼
- Entity Registry ──────► register_entity() keeps the map current
-       │                  as code changes during implementation
-       │                      │
-       ▼                      ▼
- Session Summaries ────► save_session_summary() persists decisions,
-       │                  gotchas, partially-built state
-       │                      │
-       ▼                      ▼
- session_briefing() ───► Returns ALL of the above to the next session
-       │                      │
-       └──────────────────────┘
-              CYCLE BROKEN
-       (next session starts with full context,
-        not from scratch)
+```mermaid
+flowchart TD
+    PI["<b>PROJECT_INDEX.md/.json</b><br>Token-efficient codemap<br>(~3K tokens vs ~58K full read)<br>Regenerated at briefing, save, and done"]
+    -->|"structural vocabulary"| ARCH
+
+    ARCH["<b>ARCHITECTURE.md</b><br>Entity table: what exists, where,<br>key signatures and fields"]
+    -->|"entities by exact name"| CL
+
+    CL["<b>CHECKLIST.md</b><br>Self-contained tasks cite entities<br>by exact name — the compaction firewall"]
+    -->|"tracks what changed"| ER
+
+    ER["<b>Entity Registry</b><br>register_entity() keeps the map<br>current as code changes"]
+    -->|"narrative context"| SS
+
+    SS["<b>Session Summaries</b><br>save_session_summary() persists<br>decisions, gotchas, partial state"]
+    -->|"ALL returned in one call"| SB
+
+    SB["<b>session_briefing()</b><br>Returns everything above<br>to the next session"]
+    -->|"CYCLE BROKEN"| PI
+
+    style PI fill:#1a3a1a,color:#fff
+    style CL fill:#1a1a3e,color:#e0e0fa,stroke:#7c4dff
+    style SB fill:#1a1a2e,color:#e0e0fa,stroke:#7c4dff
 ```
 
 ### Before and after
@@ -352,7 +353,7 @@ register_project("my-project", "/path/to/my-project")
 session_briefing("my-project")
 ```
 
-Returns: recent git history, CHECKLIST status (with four-state markers), incomplete prior session intents, Pieces LTM session history, and the named entity registry.
+Returns: project codemap, recent git history, CHECKLIST status (with four-state markers), incomplete prior session intents, saved session summaries, Pieces LTM session history, and the named entity registry.
 
 ## Requirements
 
@@ -414,17 +415,20 @@ Four skills are included for the `/sesh:` command namespace:
 | `/sesh:save` | Milestones, checkpoints, pre-compaction | Calls `save_session_summary`, persists context |
 | `/sesh:done` | Session end | Saves summary, marks checklist items, registers entities, completes intent |
 
-### Install skills
+### Install skills + global CLAUDE.md
 
 ```bash
 ./install-skills.sh
 ```
 
-This symlinks `skills/sesh-*` into `~/.claude/skills/`.
+This does three things:
+1. Symlinks `skills/sesh-*` into `~/.claude/skills/`
+2. Appends the session continuity snippet to `~/.claude/CLAUDE.md` (shows you what it's adding)
+3. Adds a bootstrap directive that auto-propagates the snippet to project `CLAUDE.md` files
 
-### CLAUDE.md integration
-
-Copy `examples/CLAUDE.md.snippet` into any project's `CLAUDE.md` to instruct all AI agents to follow the session protocol.
+After install, every Claude Code session on any project will see the session protocol.
+On first session in a project whose `CLAUDE.md` doesn't have the snippet yet, the agent
+will append it automatically — no manual copy needed.
 
 ## Available Tools
 
@@ -459,25 +463,54 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
 
 ## Workflow Protocol
 
+```mermaid
+flowchart TD
+    START["<b>1. SESSION START</b>"] --> GenIdx1["Regenerate PROJECT_INDEX<br>(5 parallel searches → matched pair)"]
+    GenIdx1 --> Brief["session_briefing('my-project')<br>→ codemap, git, checklist, intents,<br>summaries, Pieces LTM, entity registry"]
+
+    Brief --> Intent["<b>2. BEFORE CODING</b><br>record_session_intent('my-project',<br>'What I will do', files=[...])"]
+
+    Intent --> Work["<b>3. DURING WORK</b><br>register_entity() for new entities<br>mark_checklist_item() as items complete"]
+
+    Work --> Save["<b>4. SAVE CONTINUOUSLY</b><br>Regenerate PROJECT_INDEX pair<br>save_session_summary()"]
+    Save -->|"after milestones,<br>every 3-5 changes,<br>pre-compaction"| Work
+
+    Work --> End["<b>5. SESSION END</b><br>Regenerate PROJECT_INDEX pair<br>save_session_summary() THEN<br>complete_session_intent()"]
+
+    style START fill:#1a3a1a,color:#fff
+    style Brief fill:#1a1a2e,color:#e0e0fa,stroke:#7c4dff
+    style End fill:#1a1a3e,color:#e0e0fa,stroke:#7c4dff
 ```
-1. SESSION START
-   └─ session_briefing("my-project")
-      → See git history, CHECKLIST, prior intents, saved summaries, entity map
 
-2. BEFORE CODING
-   └─ record_session_intent("my-project", "What I will do", files=["..."])
-      → Warns if another session claimed the same files
+### Compaction guard (three conditions)
 
-3. DURING WORK
-   └─ register_entity() for new functions/classes/endpoints
-   └─ mark_checklist_item() as items complete
-   └─ save_session_summary() after milestones or when context may be lost
+Context compaction evicts tool results from working memory. The response depends
+on **which phase** the agent is in when compaction occurs:
 
-4. SESSION END
-   └─ save_session_summary("my-project", "Full structured summary", ...)
-   └─ complete_session_intent("my-project", session_id, outcome="...")
-      → Always save BEFORE completing intent (summary is critical, intent is nice-to-have)
+```mermaid
+flowchart TD
+    Compact["⚡ Context compaction detected<br>(or no briefing ever called)"]
+    Compact --> Check{"Which phase?"}
+
+    Check -->|"No briefing yet"| Brief["Call session_briefing() NOW<br>before any other action"]
+    Check -->|"Architect phases (1-3)<br>MAP / ARCHITECT / PLAN"| ReBrief["Re-call session_briefing()<br>to reload codemap, checklist,<br>entity registry, summaries"]
+    Check -->|"Coder phase (4)<br>executing CHECKLIST tasks"| Tunnel["🔒 TUNNEL VISION<br>Do NOT re-brief<br>Do NOT spelunk<br>Re-read CHECKLIST.md<br>Find current task<br>Continue executing"]
+
+    Brief --> Safe["✅ Full context restored"]
+    ReBrief --> Safe
+    Tunnel --> Safe2["✅ CHECKLIST.md is self-contained<br>(the compaction firewall)"]
+
+    style Compact fill:#8B0000,color:#fff
+    style Tunnel fill:#1a1a3e,color:#e0e0fa,stroke:#7c4dff
+    style Safe fill:#1a3a1a,color:#fff
+    style Safe2 fill:#1a3a1a,color:#fff
 ```
+
+CHECKLIST.md is the **compaction firewall**. Every task is self-contained with
+exact entity names, file paths, signatures, parameters, return types, and
+acceptance criteria. A coder in Phase 4 needs nothing from the briefing — the
+architect's job was to make the checklist complete enough that a coder who wakes
+up with amnesia can still execute correctly.
 
 ## Anti-Circular-Programming Architecture
 
@@ -487,10 +520,13 @@ from scratch -- often differently. This protocol breaks the cycle with a reinfor
 pipeline:
 
 ```
+PROJECT_INDEX.md/.json   ← Token-efficient codemap (~3K tokens, regenerated every lifecycle step)
+       │
+       ▼
 ARCHITECTURE.md          ← Entity table: what exists, where, key signatures
        │
        ▼
-CHECKLIST.md             ← Tasks cite entities by exact name (no ambiguity)
+CHECKLIST.md             ← Tasks cite entities by exact name (the compaction firewall)
        │
        ▼
 Entity Registry          ← register_entity() keeps the map current as code changes
