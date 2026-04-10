@@ -6,11 +6,21 @@ config files per tool).
 
 ### Session guard (proactive — non-negotiable)
 
-If you are responding in a session where `session_briefing` has **not yet been called**,
-**stop what you are doing and call it NOW** before reading files, making plans, or
-writing code. A session without a briefing is flying blind — every action risks
-duplicating or contradicting prior work. This guard is self-enforcing: the agent must
-check, not the user.
+This guard fires on **two** conditions:
+
+1. **No briefing called yet** -- `session_briefing` has not been called in this session.
+2. **Post-compaction amnesia** -- `session_briefing` was called earlier, but context
+   compaction/summarization has since evicted the results. You can detect this: if you
+   cannot recall the specific contents of the PROJECT_INDEX, CHECKLIST status, or entity
+   registry from the briefing — the data is gone.
+
+In **either** case: **stop what you are doing and call `session_briefing` NOW** before
+reading files, making plans, or writing code. A session without live briefing data is
+flying blind — every action risks duplicating or contradicting prior work.
+
+This guard is self-enforcing: the agent must check, not the user. Compaction does NOT
+persist session state into working context — it only summarizes that a briefing happened.
+The summary is not a substitute for the data.
 
 ### Mandatory session protocol
 
@@ -38,7 +48,8 @@ check, not the user.
    - When ANY other checkpoint or save mechanism fires
    A checkpoint without persisted session context = Circular Programming Express.
    The cost of saving too often is zero. The cost of not saving is starting from
-   scratch.
+   scratch. **After compaction occurs**, re-call `session_briefing` to reload the
+   codemap and session state — compaction evicts tool results from working context.
 
 5. **SESSION END** -- Regenerate the PROJECT_INDEX pair, call
    `save_session_summary()` with a full structured summary, THEN call

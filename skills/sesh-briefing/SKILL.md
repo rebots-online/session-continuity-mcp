@@ -1,6 +1,6 @@
 ---
 name: sesh-briefing
-description: Call session_briefing via context-mcp at the start of every session. Use when beginning work on any registered project, resuming after an interruption, or when you need to understand what happened in prior sessions. AUTO-ACTIVATE if you detect no briefing has been called yet in this session — do not wait for the user to ask. Trigger on /sesh:briefing, "brief me", "what happened last session", "session start", any new session on a registered project, or agent self-detection that no briefing has occurred.
+description: Call session_briefing via context-mcp at the start of every session. Use when beginning work on any registered project, resuming after an interruption, or when you need to understand what happened in prior sessions. AUTO-ACTIVATE on two conditions — (1) no briefing called yet, or (2) briefing was called but context compaction evicted the results (post-compaction amnesia). Trigger on /sesh:briefing, "brief me", "what happened last session", "session start", any new session on a registered project, context compaction/summarization, or agent self-detection that briefing data is missing from working context.
 ---
 
 # Session Briefing
@@ -10,7 +10,10 @@ Call `session_briefing` from the `context-mcp` MCP server to get full cross-sess
 ## When to use
 
 - At the **start of every session** before reading files or making plans
-- When resuming after a context compaction or interruption
+- **After context compaction** — compaction evicts tool results; the codemap,
+  checklist, and entity data are gone from working context even though a summary
+  says "briefing was called." Re-call to reload.
+- When resuming after an interruption
 - When asked "what happened last session" or "where did we leave off"
 - When starting work on any project registered with context-mcp
 
@@ -135,11 +138,28 @@ A session that starts without calling `session_briefing` risks:
 
 ## Self-activation (non-negotiable)
 
-If you are an agent in a session where `session_briefing` has NOT been called yet:
+This skill must auto-fire on **two** conditions — not just one:
+
+### Condition 1: No briefing called yet
+If `session_briefing` has NOT been called in this session.
+
+### Condition 2: Post-compaction amnesia
+If `session_briefing` WAS called, but context compaction/summarization has since
+evicted the results. **Compaction does not persist tool results into working context.**
+It only preserves a summary that a briefing happened — not the codemap, not the
+checklist items, not the entity registry.
+
+**How to detect**: if you cannot recall the specific contents of PROJECT_INDEX,
+CHECKLIST status, entity registry, or session summaries from the briefing — the
+data was evicted. The presence of a conversation summary mentioning "briefing was
+called" is NOT a substitute for the actual data.
+
+### In either case:
 1. **Stop** whatever you are about to do
 2. **Run this skill** immediately — before reading files, before making plans, before writing code
 3. **Then** resume the user's request
 
 Do not ask the user for permission. Do not mention that you're "checking first." Just do
-it. A session without a briefing is a session that will code in circles. The cost of a
-redundant briefing is zero. The cost of a missed briefing is a full session of wasted work.
+it. A session without **live** briefing data is a session that will code in circles. The
+cost of a redundant briefing is zero. The cost of a missed briefing is a full session of
+wasted work.
