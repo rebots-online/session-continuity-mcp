@@ -1,6 +1,6 @@
 ---
-name: sc-briefing
-description: Call session_briefing via context-mcp at the start of every session. Use when beginning work on any registered project, resuming after an interruption, or when you need to understand what happened in prior sessions. Trigger on /sc:briefing, "brief me", "what happened last session", "session start", or any new session on a registered project.
+name: sesh-briefing
+description: Call session_briefing via context-mcp at the start of every session. Use when beginning work on any registered project, resuming after an interruption, or when you need to understand what happened in prior sessions. Trigger on /sesh:briefing, "brief me", "what happened last session", "session start", or any new session on a registered project.
 ---
 
 # Session Briefing

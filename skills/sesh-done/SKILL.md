@@ -1,6 +1,6 @@
 ---
-name: sc-done
-description: Complete the current session intent and update checklist items. Use at the end of a coding session, when wrapping up work, or when the user says "we're done", "wrap up", "end session". Trigger on /sc:done, "session done", "wrap up", "end session", "mark complete".
+name: sesh-done
+description: Complete the current session intent and update checklist items. Use at the end of a coding session, when wrapping up work, or when the user says "we're done", "wrap up", "end session". Trigger on /sesh:done, "session done", "wrap up", "end session", "mark complete".
 ---
 
 # Complete Session

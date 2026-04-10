@@ -1,6 +1,6 @@
 ---
-name: sc-intent
-description: Record what this session intends to do before starting to code. Use when beginning a coding task, picking up a CHECKLIST item, or switching to a new area of work. Trigger on /sc:intent, "record intent", "I'm going to work on", or before starting any non-trivial code changes.
+name: sesh-intent
+description: Record what this session intends to do before starting to code. Use when beginning a coding task, picking up a CHECKLIST item, or switching to a new area of work. Trigger on /sesh:intent, "record intent", "I'm going to work on", or before starting any non-trivial code changes.
 ---
 
 # Record Session Intent
