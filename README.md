@@ -11,96 +11,159 @@ session built, what decisions were made, what entities exist, or what's left to 
 So it re-derives everything from scratch — often differently — creating parallel
 implementations that diverge from the existing codebase.
 
-```
- Session 1                    Session 2                    Session 3
- ─────────                    ─────────                    ─────────
- "Let me explore              "Let me explore              "Let me explore
-  the codebase..."             the codebase..."             the codebase..."
-       │                            │                            │
-       ▼                            ▼                            ▼
- Creates UserAuth             Creates AuthService           Creates LoginManager
- in src/auth.ts               in src/services/auth.ts       in lib/auth/index.ts
-       │                            │                            │
-       ▼                            ▼                            ▼
- "Done! Implemented           "Done! Implemented            "Done! Implemented
-  authentication."             authentication."              authentication."
+This manifests in three recurring failure modes that compound on each other:
+
+### Failure Mode 1: The Interrupted Session
+
+The most destructive scenario. A session partially implements a feature, then gets
+interrupted (context compaction, timeout, crash, token limit). The next session
+discovers the half-built code, doesn't recognise it as in-progress work, and
+**intentionally creates a replacement under a different name**.
+
+```mermaid
+flowchart TD
+    S1[🟢 Session 1 starts] --> Build["Builds UserAuth in src/auth.ts<br>- Creates class skeleton<br>- Implements 2 of 5 methods<br>- Leaves TODO stubs in the rest"]
+    Build --> Interrupt["⚡ Session interrupted<br>(context compaction / token limit / crash)<br><b>No session summary saved</b>"]
+    Interrupt --> S2[🟢 Session 2 starts fresh]
+    S2 --> Explore["Explores codebase...<br>Finds src/auth.ts"]
+    Explore --> Misread["Sees broken UserAuth:<br>- 3 methods throw NotImplementedError<br>- Tests don't pass<br>- No docs explaining it's in-progress"]
+    Misread --> Decide{"Agent's conclusion"}
+    Decide -->|"Looks like legacy/broken code"| New["Creates AuthService<br>in src/services/auth.ts<br>(a 'proper' replacement)"]
+    Decide -->|"Maybe I should fix it?"| Partial["Rewrites 2 methods with<br>different signatures,<br>breaks the 2 that worked"]
+    New --> Result1["📁 Codebase now has:<br>- src/auth.ts (partially built, abandoned)<br>- src/services/auth.ts (new, also partial)<br>- Neither is complete<br>- Imports point to the old one"]
+    Partial --> Result2["📁 Codebase now has:<br>- src/auth.ts (Frankenstein mix of<br>&nbsp;&nbsp;Session 1 + Session 2 patterns)<br>- 0 of 5 methods actually work<br>- Was closer to done BEFORE Session 2"]
+
+    style Interrupt fill:#8B0000,color:#fff
+    style Result1 fill:#4a1942,color:#fff
+    style Result2 fill:#4a1942,color:#fff
+    style Misread fill:#8B4513,color:#fff
 ```
 
-**Result**: Three incompatible implementations of the same thing. The codebase is
-worse than before any session started. The user must restart clean.
+The tragedy: Session 1 was **60% done**. After Session 2's "help", it's **0% done
+with twice the mess**. And Session 3 will find *two* broken auth implementations
+and may well create a third.
+
+### Failure Mode 2: The Shallow Spelunker
+
+AI agents typically search for existing code before implementing. But they have a
+systematic bias: **they stop searching after the first match**, even when the
+codebase has multiple relevant files. Worse, they often grep for a term, find one
+file, and confidently declare they understand the full picture.
+
+```mermaid
+flowchart TD
+    Start[🟢 New session: 'Implement auth'] --> Search["Searches codebase:<br>grep -r 'auth' src/"]
+    Search --> Results["Results:<br>1. src/auth.ts ← finds this first<br>2. lib/auth/index.ts ← doesn't look further<br>3. src/middleware/authGuard.ts ← never sees this<br>4. config/auth.config.ts ← never sees this"]
+    Results --> Stop["✋ Stops after first match<br>'Found it! src/auth.ts is the auth module'"]
+    Stop --> Read["Reads src/auth.ts<br>(the broken one from Session 1)"]
+    Read --> Conclude{"Agent's assessment"}
+    Conclude -->|"This looks incomplete"| Create["Creates LoginManager<br>in lib/auth/login.ts<br>(3rd implementation)"]
+    Conclude -->|"This is the auth system"| Build["Builds on top of broken stubs,<br>adds features to code that<br>doesn't actually work"]
+    Create --> State["📁 Codebase now has:<br>- src/auth.ts (Session 1, broken)<br>- src/services/auth.ts (Session 2, broken)<br>- lib/auth/login.ts (Session 3, ignores the other two)<br>- lib/auth/index.ts (original, still works, never found)<br>- src/middleware/authGuard.ts (imports from... which one?)"]
+    Build --> State2["📁 Features added to broken foundation<br>- Looks like progress from git diff<br>- Actually moves further from working state<br>- Tests all mock the broken parts so they 'pass'"]
+
+    style Stop fill:#8B4513,color:#fff
+    style State fill:#4a1942,color:#fff
+    style State2 fill:#4a1942,color:#fff
+```
+
+### Failure Mode 3: The Premature "Ship It!"
+
+Perhaps the most insidious mode. The agent implements a feature with **stubs,
+placeholder values, and hardcoded test data**, then confidently declares it
+complete and production-ready. If you've ever had an AI assistant tell you
+"Done! Fully implemented and ready to ship!" only to find `return true`,
+`TODO: implement`, and `API_KEY = "test-key-replace-me"` — you know the feeling.
+
+```mermaid
+flowchart TD
+    Start[🟢 Session implements auth] --> Code["Writes auth module:<br><code>async verifyToken(token) ‹return true›</code><br><code>const API_URL = 'http://localhost:3000'</code><br><code>// TODO: add rate limiting</code><br><code>// TODO: implement refresh tokens</code>"]
+    Code --> Tests["Writes tests:<br><code>jest.mock('./auth')</code><br><code>expect(verifyToken('any')).toBe(true) ✅</code><br>(mocks the function it just wrote)"]
+    Tests --> Declare["🎉 'Done! All tests passing!<br>Authentication is fully implemented<br>and production-ready to ship!'"]
+    Declare --> Checklist["Marks in CHECKLIST.md:<br>[X] Implement authentication<br>[X] Add token verification<br>[X] Write auth tests<br>All green! ✅✅✅"]
+    Checklist --> Next[🟢 Session N+1 starts]
+    Next --> Trust["Sees all items marked done ✅<br>'Auth is complete, moving on<br>to build features on top of it'"]
+    Trust --> Build["Builds payment system<br>that depends on auth...<br>which returns true for every token...<br>with a localhost URL in prod config...<br>and no rate limiting"]
+    Build --> Ship["🚀 Deployed to production<br>with test stubs handling real auth"]
+
+    style Declare fill:#8B4513,color:#fff
+    style Ship fill:#8B0000,color:#fff
+    style Code fill:#4a1942,color:#fff
+```
+
+**What's left in the codebase:**
+
+| What the agent said | What's actually there |
+|---------------------|-----------------------|
+| "Token verification implemented" | `return true` (accepts every token) |
+| "API integration complete" | Hardcoded `localhost:3000` |
+| "Rate limiting added" | `// TODO: add rate limiting` |
+| "Comprehensive test coverage" | Tests mock the code they're testing |
+| "Production-ready!" | One `verifyToken('anything')` away from a breach |
 
 ### Why it happens
 
 The root cause is **not** that AI agents are bad at coding. It's that they lack
 three pieces of information that humans carry between sessions automatically:
 
-```
-                    ┌─────────────────────────────────┐
-                    │     INFORMATION GAP              │
-                    ├─────────────────────────────────┤
-                    │                                  │
-                    │  1. What did the last session     │
-                    │     ACTUALLY do? (vs. intended)   │
-                    │                                  │
-                    │  2. What is the canonical state    │
-                    │     of the task list RIGHT NOW?   │
-                    │                                  │
-                    │  3. What named entities exist      │
-                    │     and WHERE are they?            │
-                    │                                  │
-                    └─────────────────────────────────┘
-                                   │
-                                   ▼
-                    ┌─────────────────────────────────┐
-                    │     WITHOUT THIS INFO...         │
-                    ├─────────────────────────────────┤
-                    │                                  │
-                    │  • Agent re-explores from scratch │
-                    │  • Creates new implementations    │
-                    │  • Uses different names/patterns  │
-                    │  • Doesn't know what's "done"     │
-                    │  • Partially builds on top of     │
-                    │    other partial builds            │
-                    │                                  │
-                    └─────────────────────────────────┘
-                                   │
-                                   ▼
-                         CIRCULAR PROGRAMMING
-                    (same work, different results,
-                     compounding divergence)
+```mermaid
+flowchart TD
+    Gap["<b>THE INFORMATION GAP</b>"] --> G1["1. What did the last session<br>ACTUALLY do? (vs. what it intended)"]
+    Gap --> G2["2. What is the canonical state<br>of the task list RIGHT NOW?"]
+    Gap --> G3["3. What named entities exist<br>and WHERE are they?"]
+    G1 --> Effects
+    G2 --> Effects
+    G3 --> Effects
+    Effects["<b>WITHOUT THIS, THE AGENT...</b>"] --> E1["Re-explores from scratch"]
+    Effects --> E2["Creates new implementations<br>under new names"]
+    Effects --> E3["Stops searching after first match"]
+    Effects --> E4["Can't distinguish done from<br>broken-and-abandoned"]
+    Effects --> E5["Builds on top of stubs,<br>declares 'Ship it!'"]
+    E1 --> CP["<b>CIRCULAR PROGRAMMING</b><br>Same work, different results,<br>compounding divergence"]
+    E2 --> CP
+    E3 --> CP
+    E4 --> CP
+    E5 --> CP
+
+    style Gap fill:#1a1a2e,color:#e0e0fa,stroke:#7c4dff
+    style Effects fill:#1a1a2e,color:#e0e0fa,stroke:#7c4dff
+    style CP fill:#8B0000,color:#fff
 ```
 
 ### The compounding effect
 
 Circular programming gets **worse** over time, not better. Each session that starts
-without context adds another layer of partial, divergent implementation:
-
-```
- Codebase health over sessions (without continuity):
-
- Quality
-   ▲
-   │  ●
-   │    ●
-   │      ●            Agent starts fresh,
-   │        ●          creates new stubs
-   │          ●            │
-   │            ●──────────┘
-   │              ●
-   │                ●      New stubs conflict
-   │                  ●    with old stubs
-   │                    ●      │
-   │                      ●────┘
-   │                        ●
-   │                          ●  User forced to
-   │                            ● restart clean
-   └──────────────────────────────────► Sessions
-     1    2    3    4    5    6    7
-```
-
-The worst case is a **partially-implemented feature without saved context**. The next
-session sees broken stubs and invents new ones alongside them. This is worse than no
+without context adds another layer of partial, divergent implementation. The worst
+case is a **partially-implemented feature without saved context**: the next session
+sees broken stubs and invents new ones alongside them. This is worse than no
 implementation at all.
+
+```mermaid
+flowchart LR
+    subgraph S1["Session 1"]
+        A1["Creates UserAuth<br>(60% complete)"]
+    end
+    subgraph S2["Session 2"]
+        A2["Finds broken UserAuth<br>Creates AuthService<br>(40% complete)"]
+    end
+    subgraph S3["Session 3"]
+        A3["Finds two broken auths<br>Creates LoginManager<br>(30% complete)"]
+    end
+    subgraph S4["Session 4"]
+        A4["Finds three broken auths<br>Tries to 'unify' them<br>Breaks all three"]
+    end
+    subgraph S5["Session 5"]
+        A5["🔥 User deletes branch<br>Starts over from scratch"]
+    end
+
+    S1 --> S2 --> S3 --> S4 --> S5
+
+    style S1 fill:#1a3a1a,color:#fff
+    style S2 fill:#3a3a1a,color:#fff
+    style S3 fill:#4a2a1a,color:#fff
+    style S4 fill:#5a1a1a,color:#fff
+    style S5 fill:#8B0000,color:#fff
+```
 
 ## The Solution: Session Continuity Protocol
 
