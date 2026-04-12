@@ -19,83 +19,20 @@ Call `session_briefing` from the `context-mcp` MCP server to get full cross-sess
 
 ## Procedure
 
-### Step 1: Regenerate the Project Index (codemap)
+### Do NOT regenerate the Project Index here
 
-**This step is mandatory on every briefing.** The PROJECT_INDEX can be stale from prior
-sessions that added, moved, or deleted files. Regenerate it fresh so the briefing
-includes an accurate structural map of the codebase.
+`PROJECT_INDEX.md` + `PROJECT_INDEX.json` are maintained **out of band** by a
+dedicated background indexing agent (cron). Working agents — architect and coder
+alike — consume the index; they never produce it. Regenerating the index inside
+a briefing burns context budget on work the background agent already owns, and
+defeats the whole point of having a token-efficient codemap.
 
-Run five parallel searches to analyze the project structure:
+If the index is missing or stale, that is a background-agent problem. The
+briefing will surface a warning (see Step 2 output); do **not** derail the
+session to rebuild it. Note the warning, continue with the user's task, and
+trust that the indexer will catch up on its next tick.
 
-1. **Code files**: `src/**/*.{ts,py,js,tsx,jsx,kt,swift}`, `lib/**/*.{ts,py,js}`, `packages/**/*.{ts,tsx}`
-2. **Documentation**: `docs/**/*.md`, `*.md` (root level), `DOCS/**/*.md`
-3. **Configuration**: `*.toml`, `*.yaml`, `*.yml`, `*.json` (exclude node_modules, package-lock)
-4. **Tests**: `tests/**/*`, `**/*.test.{ts,py,js}`, `**/*.spec.{ts,py,js}`
-5. **Scripts & tools**: `scripts/**/*`, `bin/**/*`, `tools/**/*`
-
-Then extract metadata:
-- **Entry points**: main.py, index.ts, cli.py, App.kt, etc.
-- **Core modules**: top-level directories with their purpose (1-line each)
-- **API surface**: public functions, classes, endpoints (names only, not full signatures)
-- **Dependencies**: from package.json, pyproject.toml, build.gradle.kts, Cargo.toml, etc.
-
-Generate **both files as a matched pair** in the project root:
-
-**`PROJECT_INDEX.md`** (~3KB, human-readable):
-```markdown
-# Project Index: {project_name}
-
-Generated: {YYYY-MM-DD}
-
-> Matched pair: verify PROJECT_INDEX.json has the same generated date.
-
-## Project Structure
-{tree view of main directories, 1-2 levels deep}
-
-## Entry Points
-- {path} - {1-line purpose}
-
-## Core Modules
-### {module_name}
-- Path: {path}
-- Purpose: {1-line description}
-
-## Configuration
-- {config_file}: {purpose}
-
-## Documentation
-- {doc_file}: {topic}
-
-## Test Coverage
-- {count} test files across {directories}
-
-## Key Dependencies
-- {dependency}: {version} - {why it's used}
-```
-
-**`PROJECT_INDEX.json`** (~10KB, machine-readable):
-```json
-{
-  "meta": { "project": "...", "generated": "YYYY-MM-DD" },
-  "_parity_notice": "Verify PROJECT_INDEX.md has the same generated date",
-  "entry_points": [...],
-  "modules": [...],
-  "config_files": [...],
-  "dependencies": [...]
-}
-```
-
-**Parity rules** (non-negotiable):
-- Both files MUST have the same `generated` date
-- Both files MUST be in the project root
-- No fact may differ between them
-- Each file contains a parity notice referencing its sibling
-
-**Size budget**: PROJECT_INDEX.md MUST stay under 5KB. This is a session primer,
-not comprehensive documentation. The point is ~3K tokens instead of ~58K for a
-full codebase read.
-
-### Step 2: Call session_briefing
+### Step 1: Call session_briefing
 
 Determine the project name (current working directory basename, or ask the user if
 ambiguous — call `list_projects` first if unsure), then:
@@ -105,7 +42,7 @@ session_briefing(project_name="<PROJECT_NAME>")
 ```
 
 The briefing returns:
-- **Project Index** (the codemap you just generated — included automatically)
+- **Project Index** (codemap produced by the background indexer — included automatically; may carry a staleness warning if the indexer is behind)
 - Recent git history (last 10 commits, branch, dirty status)
 - CHECKLIST.md parsed into structured items with four-state markers
 - Incomplete session intents from prior sessions
@@ -113,7 +50,7 @@ The briefing returns:
 - Recent Pieces LTM session history
 - Named entity registry
 
-### Step 3: Report to the user
+### Step 2: Report to the user
 
 Summarize:
 - What the last session(s) worked on
@@ -121,7 +58,7 @@ Summarize:
 - Any incomplete session intents that need attention
 - Current branch and uncommitted changes
 
-### Step 4: Record your intent (if about to start coding)
+### Step 3: Record your intent (if about to start coding)
 
 ```
 record_session_intent(project_name="<PROJECT_NAME>", intent="<what you will do>", files_to_touch=["path/one", "path/two"])

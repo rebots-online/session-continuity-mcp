@@ -212,7 +212,7 @@ and `session_briefing()` returns all of them at once:
 
 ```mermaid
 flowchart TD
-    PI["<b>PROJECT_INDEX.md/.json</b><br>Token-efficient codemap<br>(~3K tokens vs ~58K full read)<br>Regenerated at briefing, save, and done"]
+    PI["<b>PROJECT_INDEX.md/.json</b><br>Token-efficient codemap<br>(~3K tokens vs ~58K full read)<br>Maintained out of band by a<br>dedicated background indexer (cron)"]
     -->|"structural vocabulary"| ARCH
 
     ARCH["<b>ARCHITECTURE.md</b><br>Entity table: what exists, where,<br>key signatures and fields"]
@@ -465,18 +465,23 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
 
 ```mermaid
 flowchart TD
-    START["<b>1. SESSION START</b>"] --> GenIdx1["Regenerate PROJECT_INDEX<br>(5 parallel searches → matched pair)"]
-    GenIdx1 --> Brief["session_briefing('my-project')<br>→ codemap, git, checklist, intents,<br>summaries, Pieces LTM, entity registry"]
+    Indexer["🤖 <b>Background indexing agent</b><br>(cron — out of band)<br>Regenerates PROJECT_INDEX.md/.json<br>Working agents never touch this file"]
+    Indexer -.->|"produces"| PIFile[("PROJECT_INDEX.md/.json<br>on disk")]
+
+    START["<b>1. SESSION START</b>"] --> Brief["session_briefing('my-project')<br>→ codemap, git, checklist, intents,<br>summaries, Pieces LTM, entity registry"]
+    PIFile -.->|"read by"| Brief
 
     Brief --> Intent["<b>2. BEFORE CODING</b><br>record_session_intent('my-project',<br>'What I will do', files=[...])"]
 
     Intent --> Work["<b>3. DURING WORK</b><br>register_entity() for new entities<br>mark_checklist_item() as items complete"]
 
-    Work --> Save["<b>4. SAVE CONTINUOUSLY</b><br>Regenerate PROJECT_INDEX pair<br>save_session_summary()"]
+    Work --> Save["<b>4. SAVE CONTINUOUSLY</b><br>save_session_summary()<br>(index untouched — indexer's job)"]
     Save -->|"after milestones,<br>every 3-5 changes,<br>pre-compaction"| Work
 
-    Work --> End["<b>5. SESSION END</b><br>Regenerate PROJECT_INDEX pair<br>save_session_summary() THEN<br>complete_session_intent()"]
+    Work --> End["<b>5. SESSION END</b><br>save_session_summary() THEN<br>complete_session_intent()<br>(index untouched — indexer's job)"]
 
+    style Indexer fill:#2a2a1a,color:#fff,stroke:#d4af37
+    style PIFile fill:#1a2a3a,color:#e0e0fa
     style START fill:#1a3a1a,color:#fff
     style Brief fill:#1a1a2e,color:#e0e0fa,stroke:#7c4dff
     style End fill:#1a1a3e,color:#e0e0fa,stroke:#7c4dff
@@ -601,7 +606,7 @@ from scratch -- often differently. This protocol breaks the cycle with a reinfor
 pipeline:
 
 ```
-PROJECT_INDEX.md/.json   ← Token-efficient codemap (~3K tokens, regenerated every lifecycle step)
+PROJECT_INDEX.md/.json   ← Token-efficient codemap (~3K tokens, maintained by a dedicated background indexer on a cron — working agents read, never write)
        │
        ▼
 ARCHITECTURE.md          ← Entity table: what exists, where, key signatures

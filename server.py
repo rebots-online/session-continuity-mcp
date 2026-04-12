@@ -382,7 +382,11 @@ def tool_session_briefing(project_name: str) -> str:
                 lines.append(idx_content)
                 # Check parity: warn if JSON sibling is missing or stale
                 if not idx_json.exists():
-                    lines.append("⚠️ `PROJECT_INDEX.json` missing — index pair incomplete. Regenerate with `generate_project_index`.")
+                    lines.append(
+                        "⚠️ `PROJECT_INDEX.json` missing — index pair incomplete. "
+                        "This is a background-indexer problem, not a session problem. "
+                        "Note it and continue; do NOT regenerate inline."
+                    )
                 else:
                     try:
                         idx_data = json.loads(idx_json.read_text(encoding="utf-8"))
@@ -391,19 +395,24 @@ def tool_session_briefing(project_name: str) -> str:
                         md_date_match = re.search(r"Generated:\s*(\S+)", idx_content[:500])
                         md_date = md_date_match.group(1) if md_date_match else ""
                         if json_date and md_date and json_date != md_date:
-                            lines.append(f"⚠️ Index pair date mismatch: MD={md_date}, JSON={json_date}. Regenerate.")
+                            lines.append(
+                                f"⚠️ Index pair date mismatch: MD={md_date}, JSON={json_date}. "
+                                f"Background indexer is behind — note it and continue."
+                            )
                     except Exception:
                         pass
             except Exception as e:
                 lines.append(f"_(error reading PROJECT_INDEX.md: {e})_")
         else:
             lines.append(
-                "⚠️ No `PROJECT_INDEX.md` found. Generate the codemap to prevent shallow spelunking.\n"
-                "The agent should generate PROJECT_INDEX.md + PROJECT_INDEX.json as a matched pair:\n"
-                "- Scan project structure (code, docs, config, tests, scripts)\n"
-                "- Identify entry points, core modules, API surface, dependencies\n"
-                "- Keep index < 5KB for token efficiency (~3K tokens vs ~58K for full codebase read)\n"
-                "- Both files in project root with matching timestamps"
+                "⚠️ No `PROJECT_INDEX.md` found. The codemap is maintained out of band by a "
+                "dedicated background indexing agent (cron). If this warning fires, the "
+                "indexer has not yet run against this project — check its schedule / registration.\n\n"
+                "**Working agents must NOT regenerate the index inline.** Doing so burns "
+                "context budget on work the background agent already owns and defeats the "
+                "whole point of a token-efficient codemap. Note this warning, continue with "
+                "the user's task, and rely on `git ls-files` / targeted `Grep` for any "
+                "structural lookups you'd otherwise have gotten from the index."
             )
     else:
         lines.append("_(project root not found)_")

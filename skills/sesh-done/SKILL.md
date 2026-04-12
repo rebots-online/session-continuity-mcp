@@ -52,14 +52,11 @@ Wrap up the current session by completing the session intent, marking checklist 
    ```
    This persists the session narrative to context.db. Without this, the next session starts blind.
 
-5. **Regenerate the Project Index (codemap).** The session changed files — the
-   PROJECT_INDEX must reflect the final state. Follow the same index generation
-   procedure as `/sesh:briefing` Step 1:
-   - Run parallel searches (code, docs, config, tests, scripts)
-   - Extract metadata (entry points, modules, API surface, dependencies)
-   - Write both `PROJECT_INDEX.md` and `PROJECT_INDEX.json` as a matched pair
-   - Verify parity (same generated date, same facts, both in project root)
-   - Keep PROJECT_INDEX.md under 5KB (token-efficient session primer)
+5. **Do not touch `PROJECT_INDEX.*`.** The index is owned by a dedicated
+   background indexing agent on a cron. Working agents never regenerate it
+   inline — that would burn context budget on work another agent already owns
+   and defeat the whole point of a token-efficient codemap. The indexer will
+   reflect this session's file changes on its next tick.
 
 6. **Complete the session intent:**
    ```
@@ -74,7 +71,6 @@ Wrap up the current session by completing the session intent, marking checklist 
    - Checklist items completed (with state)
    - Entities registered
    - Session summary saved (confirm it persisted)
-   - Project index refreshed
    - Any items left in-progress for the next session
    - The session_id and outcome recorded
 

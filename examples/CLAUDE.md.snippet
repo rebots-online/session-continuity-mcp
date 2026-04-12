@@ -34,12 +34,13 @@ The summary is not a substitute for the data (conditions 1–2) or the task spec
 
 ### Mandatory session protocol
 
-1. **SESSION START** -- Regenerate `PROJECT_INDEX.md` + `PROJECT_INDEX.json` (the
-   token-efficient codemap), then call `session_briefing("<PROJECT_NAME>")` BEFORE
-   reading any files or making any plans. The briefing returns: the codemap, git
-   state, CHECKLIST status, prior session intents, saved session summaries, Pieces
-   LTM history, and the entity registry. This replaces "explore the codebase from
-   scratch."
+1. **SESSION START** -- Call `session_briefing("<PROJECT_NAME>")` BEFORE reading
+   any files or making any plans. The briefing returns: the codemap (produced
+   out of band by the background indexing agent), git state, CHECKLIST status,
+   prior session intents, saved session summaries, Pieces LTM history, and the
+   entity registry. This replaces "explore the codebase from scratch." Working
+   agents do NOT regenerate `PROJECT_INDEX.*` — that is the background indexer's
+   job. If the briefing surfaces a staleness warning, note it and continue.
 
 2. **BEFORE CODING** -- Call `record_session_intent("<PROJECT_NAME>", "<what you
    will do>", files=["path/one", "path/two"])`. This warns if another session
@@ -49,8 +50,7 @@ The summary is not a substitute for the data (conditions 1–2) or the task spec
    named entity (function, class, endpoint, type). Call `mark_checklist_item()`
    as you complete CHECKLIST.md tasks.
 
-4. **SAVE CONTINUOUSLY** -- Regenerate the PROJECT_INDEX pair, then call
-   `save_session_summary()` proactively:
+4. **SAVE CONTINUOUSLY** -- Call `save_session_summary()` proactively:
    - After completing a major milestone or CHECKLIST section
    - Every 3-5 significant code changes
    - Before any risky or long-running operation
@@ -62,10 +62,10 @@ The summary is not a substitute for the data (conditions 1–2) or the task spec
    `session_briefing` to reload context. If in coder phase (4), do NOT re-brief —
    re-read CHECKLIST.md and continue the current task with tunnel vision.
 
-5. **SESSION END** -- Regenerate the PROJECT_INDEX pair, call
-   `save_session_summary()` with a full structured summary, THEN call
-   `complete_session_intent("<PROJECT_NAME>", "<session_id>",
-   outcome="<what was accomplished>")`.
+5. **SESSION END** -- Call `save_session_summary()` with a full structured
+   summary, THEN call `complete_session_intent("<PROJECT_NAME>", "<session_id>",
+   outcome="<what was accomplished>")`. Do NOT regenerate `PROJECT_INDEX.*` —
+   the background indexer owns that artifact.
 
 ### Anti-circular-programming architecture
 
