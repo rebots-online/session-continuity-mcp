@@ -32,10 +32,15 @@ briefing will surface a warning (see Step 2 output); do **not** derail the
 session to rebuild it. Note the warning, continue with the user's task, and
 trust that the indexer will catch up on its next tick.
 
-### Step 1: Call session_briefing
+### Step 1: Resolve the project (registered or not)
 
-Determine the project name (current working directory basename, or ask the user if
-ambiguous — call `list_projects` first if unsure), then:
+Call `list_projects` first. Resolve the current working directory basename against
+the result:
+
+- **If cwd's basename matches a registered project** → proceed to Step 1a (full briefing).
+- **If the cwd is unregistered** → proceed to Step 1b (degraded local briefing). Do **not** fabricate a project name to force a `session_briefing` call — it will fail or mis-attribute state.
+
+### Step 1a: Full briefing (registered project)
 
 ```
 session_briefing(project_name="<PROJECT_NAME>")
@@ -49,6 +54,25 @@ The briefing returns:
 - Saved session summaries (narrative context from prior sessions)
 - Recent Pieces LTM session history
 - Named entity registry
+
+### Step 1b: Degraded local briefing (unregistered project)
+
+When the project is not registered with context-mcp, much of the briefing value is still
+obtainable — Pieces LTM is a cross-project melange; git and local files are always
+available. Do the following *in parallel* where possible:
+
+1. `git log --oneline -n 20`, `git status`, `git branch --show-current`.
+2. Read `CHECKLIST.md` from the repo root if it exists (and `PROJECT_INDEX.md` / `.json` if present).
+3. Pieces LTM queries — `mcp__pieces__ask_pieces_ltm` or `mcp__pieces__workstream_summaries_vector_search` — use the repo name, cwd path, and any prominent filenames as search terms. Pieces indexes across all work, so relevant cross-project memories surface here too.
+4. `mcp__context-mcp__search_history` / `get_recent_sessions` without a `project_name` filter if the tool supports it; otherwise skip this step.
+
+Report the degraded briefing to the user, and **once, at the end**, surface:
+
+> This project is not registered with context-mcp, so briefings are degraded.
+> Run `/init-checklist` to register it (plus generate architecture and checklist) —
+> subsequent sessions will get full briefings automatically.
+
+Do not nag or re-raise this on every turn. One notice per session.
 
 ### Step 2: Report to the user
 
