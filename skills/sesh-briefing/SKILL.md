@@ -19,13 +19,15 @@ Call `session_briefing` from the `context-mcp` MCP server to get full cross-sess
 
 ## Procedure
 
-### Do NOT regenerate the Project Index here
+### Do NOT regenerate the codemap here
 
-`PROJECT_INDEX.md` + `PROJECT_INDEX.json` are maintained **out of band** by a
-dedicated background indexing agent (cron). Working agents — architect and coder
-alike — consume the index; they never produce it. Regenerating the index inside
-a briefing burns context budget on work the background agent already owns, and
-defeats the whole point of having a token-efficient codemap.
+The codemap is the **codegraph** knowledge graph (`.codegraph/codegraph.db`,
+tree-sitter + FTS5 — TC8; `PROJECT_INDEX.*` is retired). It is maintained **out
+of band** by the cclaude auto-indexer (`codegraph serve --mcp` file-watcher +
+`codegraph sync` — TC1). Working agents — architect and coder alike — consume
+the graph (read the briefing's codemap section, or query the `codegraph_*` MCP
+tools); they never produce it. Regenerating a codemap inside a briefing burns
+context budget on work the indexer already owns.
 
 If the index is missing or stale, that is a background-agent problem. The
 briefing will surface a warning (see Step 2 output); do **not** derail the
@@ -62,7 +64,7 @@ obtainable — Pieces LTM is a cross-project melange; git and local files are al
 available. Do the following *in parallel* where possible:
 
 1. `git log --oneline -n 20`, `git status`, `git branch --show-current`.
-2. Read `CHECKLIST.md` from the repo root if it exists (and `PROJECT_INDEX.md` / `.json` if present).
+2. Read `CHECKLIST.md` from the repo root if it exists (and query the `codegraph_*` MCP tools, or read `.codegraph/codegraph.db`, for the codemap if present).
 3. Pieces LTM queries — `mcp__pieces__ask_pieces_ltm` or `mcp__pieces__workstream_summaries_vector_search` — use the repo name, cwd path, and any prominent filenames as search terms. Pieces indexes across all work, so relevant cross-project memories surface here too.
 4. `mcp__context-mcp__search_history` / `get_recent_sessions` without a `project_name` filter if the tool supports it; otherwise skip this step.
 
@@ -111,9 +113,9 @@ evicted the results. **Compaction does not persist tool results into working con
 It only preserves a summary that a briefing happened — not the codemap, not the
 checklist items, not the entity registry.
 
-**How to detect**: if you cannot recall the specific contents of PROJECT_INDEX,
-CHECKLIST status, entity registry, or session summaries from the briefing — the
-data was evicted. The presence of a conversation summary mentioning "briefing was
+**How to detect**: if you cannot recall the specific contents of the codegraph
+codemap, CHECKLIST status, entity registry, or session summaries from the
+briefing — the data was evicted. The presence of a conversation summary mentioning "briefing was
 called" is NOT a substitute for the actual data.
 
 **Action**: Run this skill immediately to reload full context.

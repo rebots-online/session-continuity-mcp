@@ -175,10 +175,9 @@ from scratch, the agent receives:
  │                    session_briefing() returns:                   │
  ├─────────────────────────────────────────────────────────────────┤
  │                                                                  │
- │  1. PROJECT INDEX (codemap)     Token-efficient structural map   │
- │     (PROJECT_INDEX.md/.json     of the codebase: modules, entry  │
- │      matched pair)              points, dependencies (~3K tokens │
- │                                 vs ~58K for full codebase read)  │
+ │  1. CODEMAP (codegraph)        Token-efficient structural map    │
+ │     (.codegraph/codegraph.db    of the codebase: files, symbols, │
+ │      tree-sitter graph, TC8)    edges — summarized, not full read│
  │                                                                  │
  │  2. RECENT GIT HISTORY         What actually changed on disk     │
  │     (last 10 commits, branch,   (authoritative, not recalled)    │
@@ -212,7 +211,7 @@ and `session_briefing()` returns all of them at once:
 
 ```mermaid
 flowchart TD
-    PI["<b>PROJECT_INDEX.md/.json</b><br>Token-efficient codemap<br>(~3K tokens vs ~58K full read)<br>Maintained out of band by a<br>dedicated background indexer (cron)"]
+    PI["<b>codegraph (.codegraph/codegraph.db)</b><br>Token-efficient codemap<br>(tree-sitter + FTS5 graph, TC8)<br>Maintained out of band by the<br>cclaude auto-indexer (TC1)"]
     -->|"structural vocabulary"| ARCH
 
     ARCH["<b>ARCHITECTURE.md</b><br>Entity table: what exists, where,<br>key signatures and fields"]
@@ -465,8 +464,8 @@ Also supported: `[>]` (in_progress), `[~]` (blocked).
 
 ```mermaid
 flowchart TD
-    Indexer["🤖 <b>Background indexing agent</b><br>(cron — out of band)<br>Regenerates PROJECT_INDEX.md/.json<br>Working agents never touch this file"]
-    Indexer -.->|"produces"| PIFile[("PROJECT_INDEX.md/.json<br>on disk")]
+    Indexer["🤖 <b>cclaude auto-indexer</b><br>(file watcher + sync — out of band, TC1)<br>Maintains the codegraph graph<br>Working agents never rebuild it"]
+    Indexer -.->|"produces"| PIFile[(".codegraph/codegraph.db<br>on disk")]
 
     START["<b>1. SESSION START</b>"] --> Brief["session_briefing('my-project')<br>→ codemap, git, checklist, intents,<br>summaries, Pieces LTM, entity registry"]
     PIFile -.->|"read by"| Brief
@@ -606,7 +605,7 @@ from scratch -- often differently. This protocol breaks the cycle with a reinfor
 pipeline:
 
 ```
-PROJECT_INDEX.md/.json   ← Token-efficient codemap (~3K tokens, maintained by a dedicated background indexer on a cron — working agents read, never write)
+codegraph (.codegraph/codegraph.db)  ← Token-efficient codemap (tree-sitter + FTS5 graph, TC8; maintained by the cclaude auto-indexer, TC1 — working agents read, never write)
        │
        ▼
 ARCHITECTURE.md          ← Entity table: what exists, where, key signatures

@@ -52,11 +52,11 @@ Wrap up the current session by completing the session intent, marking checklist 
    ```
    This persists the session narrative to context.db. Without this, the next session starts blind.
 
-5. **Do not touch `PROJECT_INDEX.*`.** The index is owned by a dedicated
-   background indexing agent on a cron. Working agents never regenerate it
-   inline — that would burn context budget on work another agent already owns
-   and defeat the whole point of a token-efficient codemap. The indexer will
-   reflect this session's file changes on its next tick.
+5. **Do not regenerate the codegraph codemap.** The graph
+   (`.codegraph/codegraph.db`, TC8) is owned by the cclaude auto-indexer (file
+   watcher + `codegraph sync`, TC1). Working agents never rebuild it inline —
+   that would burn context budget on work the indexer already owns. It reflects
+   this session's file changes on its next tick. (`PROJECT_INDEX.*` is retired.)
 
 6. **Complete the session intent:**
    ```

@@ -36,11 +36,11 @@ Persist the current session's state to `context.db` so the next session can pick
    )
    ```
 
-3. **Do not touch `PROJECT_INDEX.*`.** The index is maintained by a dedicated
-   background indexing agent on a cron — not by working agents. Regenerating it
-   here would burn context budget on work that already belongs to another agent.
-   Just save the summary and move on; the indexer picks up file changes on its
-   next tick.
+3. **Do not regenerate the codegraph codemap.** The graph
+   (`.codegraph/codegraph.db`, TC8) is maintained by the cclaude auto-indexer
+   (TC1) — not by working agents. Rebuilding it here would burn context budget on
+   work that already belongs to the indexer. Just save the summary and move on;
+   the indexer picks up file changes on its next tick. (`PROJECT_INDEX.*` is retired.)
 
 4. **Confirm to the user.** Report:
    - Summary was saved

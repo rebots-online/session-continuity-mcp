@@ -33,8 +33,41 @@ from typing import Any
 
 TOOLS_DIR    = Path(__file__).parent
 CONTEXT_DB   = Path(os.environ.get("CONTEXT_DB_PATH", str(TOOLS_DIR / "context.db")))
+# Pieces OS databases (pieces-os is the LTM enrichment source, TC2). The
+# couchbase store carries the FTS-indexed workstream events/summaries this
+# server queries; the newer vector_db store is the Tier-2 escape hatch.
 PIECES_DB    = Path(os.environ.get("PIECES_DB_PATH",
     str(Path.home() / "Documents/com.pieces.os/production/Pieces/couchbase.cblite2/db.sqlite3")))
+PIECES_VECTOR_DIR = Path(os.environ.get("PIECES_VECTOR_DIR",
+    str(Path.home() / "Documents/com.pieces.os/production/Pieces/vector_db")))
+# Postgres per-turn session archive (claude_archive on CT 112) — longitudinal
+# turn history the assessment can review for repeat convention drift.
+ARCHIVE_PG_DSN = os.environ.get(
+    "CLAUDE_ARCHIVE_DSN",
+    "host=192.168.0.249 port=5432 dbname=claude_archive user=admin password=Ch4n3l.C")
+# The sesh phase-reminder skill dir (curated PHASE_REMINDERS.md lives here; the
+# assess mode writes auto-candidates beside it). Override for other layouts.
+SESH_SKILL_DIR = Path(os.environ.get("SESH_SKILL_DIR",
+    str(Path.home() / ".claude/skills/sesh")))
+
+# ── SDLC phase classification (shared vocabulary with the injection hook) ───────
+# Keyword → phase. Kept deliberately small and identical to
+# ~/.claude/hooks/inject-phase-reminders.py so both classify a turn the same way.
+PHASE_KEYWORDS: dict[str, list[str]] = {
+    "INIT":      ["scaffold", "bootstrap", "new repo", "git init", "initialize", "kickoff"],
+    "DESIGN":    ["design", "ui", "ux", "mockup", "stitch", "figma", "screen", "wireframe", "user journey"],
+    "ARCHITECT": ["architect", "architecture", "spec", "prd", "entity table", "checklist", "plan", "map"],
+    "CODE":      ["implement", "code", "coder", "dispatch", "write the", "build the function", "refactor"],
+    "BUILD":     ["build", "release", "tag", "version", "apk", "deb", "appimage", "msi", "tauri", "ci", "package", "artifact"],
+    "DEBUG":     ["debug", "bug", "fix", "error", "crash", "failing", "broken", "regression", "troubleshoot"],
+}
+# Signals that the operator corrected/redirected the model in a user turn — the
+# highest-value evidence of a lab-trained default diverging from house SOP.
+CORRECTION_SIGNALS = [
+    "no,", "no ", "don't", "do not", "not that", "instead", "actually",
+    "stop", "wrong", "incorrect", "revert", "undo", "why is", "why are",
+    "you should", "never ", "always ", "that's not", "shouldn't",
+]
 
 # Pieces FTS tables (backslash table names — must use Python sqlite3, not CLI)
 EVENTS_FTS   = r"kv_.workstream\Events::workstream\Events\Full\Text\Search\Index_content"
@@ -179,6 +212,84 @@ def _git(project_root: Path, *args: str) -> str:
         return result.stdout.strip()
     except Exception:
         return ""
+
+
+def _codegraph_summary(root: Path, cap: int = 6000) -> str:
+    """
+    Token-efficient codemap from the project's codegraph database
+    (`.codegraph/codegraph.db`, tree-sitter + FTS5 knowledge graph — the
+    canonical MAP surface, TC8). Replaces the retired PROJECT_INDEX.*.
+
+    The graph is maintained out of band by the cclaude auto-indexer
+    (`codegraph serve --mcp` file-watcher + `codegraph sync`, TC1). Working
+    agents READ it here; they never regenerate it inline. Read-only open so a
+    live indexer write is never contended.
+    """
+    db = root / ".codegraph" / "codegraph.db"
+    if not db.exists():
+        return (
+            "⚠️ No `.codegraph/codegraph.db` found. The codemap is a tree-sitter "
+            "knowledge graph maintained out of band by the cclaude auto-indexer "
+            "(TC1/TC8). If this fires, the indexer has not run against this project "
+            "— check `codegraph init -i` / its registration. Do NOT build a codemap "
+            "inline; use `git ls-files` / targeted `Grep` for structural lookups "
+            "until the indexer catches up. (PROJECT_INDEX.* is retired — do not look "
+            "for or regenerate it.)"
+        )
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    except Exception as e:
+        return f"_(error opening codegraph.db: {e})_"
+    out: list[str] = []
+    try:
+        meta = {r["key"]: r["value"] for r in
+                conn.execute("SELECT key, value FROM project_metadata")}
+        if meta:
+            interesting = {k: meta[k] for k in
+                           ("indexed_at", "commit", "languages", "root") if k in meta}
+            if interesting:
+                out.append("**codegraph meta**: " +
+                           ", ".join(f"{k}={v}" for k, v in interesting.items()))
+        nfiles = conn.execute("SELECT count(*) FROM files").fetchone()[0]
+        nnodes = conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        nedges = conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        out.append(f"**graph**: {nfiles} files · {nnodes} nodes · {nedges} edges")
+        if nnodes == 0:
+            out.append("_(no code symbols indexed — docs-only or not yet indexed; "
+                       "rely on `git ls-files` for structure)_")
+        else:
+            langs = conn.execute(
+                "SELECT language, count(*) c FROM files GROUP BY language ORDER BY c DESC"
+            ).fetchall()
+            if langs:
+                out.append("**languages**: " +
+                           ", ".join(f"{r['language']}×{r['c']}" for r in langs if r["language"]))
+            kinds = conn.execute(
+                "SELECT kind, count(*) c FROM nodes GROUP BY kind ORDER BY c DESC"
+            ).fetchall()
+            if kinds:
+                out.append("**symbols by kind**: " +
+                           ", ".join(f"{r['kind']}×{r['c']}" for r in kinds))
+            top = conn.execute(
+                "SELECT name, kind, file_path, start_line FROM nodes "
+                "WHERE kind IN ('class','struct','interface','function','method','enum','trait') "
+                "ORDER BY file_path, start_line LIMIT 60"
+            ).fetchall()
+            if top:
+                out.append("**top symbols** (name · kind · file:line):")
+                for r in top:
+                    out.append(f"- `{r['name']}` · {r['kind']} · "
+                               f"{r['file_path']}:{r['start_line']}")
+    except Exception as e:
+        out.append(f"_(error reading codegraph graph: {e})_")
+    finally:
+        conn.close()
+    text = "\n".join(out)
+    if len(text) > cap:
+        text = text[:cap] + ("\n\n_(truncated — query the live graph via the "
+                             "`codegraph_*` MCP tools for the full map)_")
+    return text
 
 
 def _parse_checklist(root: Path) -> list[dict]:
@@ -368,52 +479,10 @@ def tool_session_briefing(project_name: str) -> str:
         lines.append(f"⚠️ Project '{project_name}' not in registry. Use register_project tool.")
     lines.append("")
 
-    # ── 1b. Project Index (token-efficient codemap) ──
-    lines.append("## Project Index (codemap)")
+    # ── 1b. Codemap (codegraph knowledge graph — TC8, replaces PROJECT_INDEX.*) ──
+    lines.append("## Codemap (codegraph)")
     if root and root.exists():
-        idx_md = root / "PROJECT_INDEX.md"
-        idx_json = root / "PROJECT_INDEX.json"
-        if idx_md.exists():
-            try:
-                idx_content = idx_md.read_text(encoding="utf-8")
-                # Cap at 6KB to stay token-efficient (the whole point of the index)
-                if len(idx_content) > 6000:
-                    idx_content = idx_content[:6000] + "\n\n_(truncated — full index in PROJECT_INDEX.md)_"
-                lines.append(idx_content)
-                # Check parity: warn if JSON sibling is missing or stale
-                if not idx_json.exists():
-                    lines.append(
-                        "⚠️ `PROJECT_INDEX.json` missing — index pair incomplete. "
-                        "This is a background-indexer problem, not a session problem. "
-                        "Note it and continue; do NOT regenerate inline."
-                    )
-                else:
-                    try:
-                        idx_data = json.loads(idx_json.read_text(encoding="utf-8"))
-                        json_date = idx_data.get("meta", {}).get("generated", "")
-                        # Extract date from markdown header (line like "Generated: 2026-04-10")
-                        md_date_match = re.search(r"Generated:\s*(\S+)", idx_content[:500])
-                        md_date = md_date_match.group(1) if md_date_match else ""
-                        if json_date and md_date and json_date != md_date:
-                            lines.append(
-                                f"⚠️ Index pair date mismatch: MD={md_date}, JSON={json_date}. "
-                                f"Background indexer is behind — note it and continue."
-                            )
-                    except Exception:
-                        pass
-            except Exception as e:
-                lines.append(f"_(error reading PROJECT_INDEX.md: {e})_")
-        else:
-            lines.append(
-                "⚠️ No `PROJECT_INDEX.md` found. The codemap is maintained out of band by a "
-                "dedicated background indexing agent (cron). If this warning fires, the "
-                "indexer has not yet run against this project — check its schedule / registration.\n\n"
-                "**Working agents must NOT regenerate the index inline.** Doing so burns "
-                "context budget on work the background agent already owns and defeats the "
-                "whole point of a token-efficient codemap. Note this warning, continue with "
-                "the user's task, and rely on `git ls-files` / targeted `Grep` for any "
-                "structural lookups you'd otherwise have gotten from the index."
-            )
+        lines.append(_codegraph_summary(root))
     else:
         lines.append("_(project root not found)_")
     lines.append("")
@@ -870,6 +939,169 @@ def tool_save_session_summary(
     })
 
 
+# ── Post-turn assessment (convention-drift detection) ──────────────────────────
+
+def _classify_phase(text: str) -> str:
+    """Best-effort SDLC-phase label from free text (first keyword hit wins by
+    PHASE_KEYWORDS order → highest specificity). Returns '' when nothing matches."""
+    low = text.lower()
+    best, best_hits = "", 0
+    for phase, kws in PHASE_KEYWORDS.items():
+        hits = sum(1 for k in kws if k in low)
+        if hits > best_hits:
+            best, best_hits = phase, hits
+    return best
+
+
+def _read_transcript(path: Path) -> tuple[list[str], list[str]]:
+    """Return (user_messages, assistant_messages) from a Claude Code JSONL
+    transcript, tolerating plain-text and malformed lines."""
+    users: list[str] = []
+    assistants: list[str] = []
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return users, assistants
+
+    def _text_of(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "text":
+                    parts.append(b.get("text", ""))
+                elif isinstance(b, str):
+                    parts.append(b)
+            return " ".join(parts)
+        return ""
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            users.append(line)  # plain-text fallback: treat as user context
+            continue
+        role = obj.get("type") or obj.get("role") or ""
+        msg = obj.get("message", obj)
+        content = _text_of(msg.get("content", "")) if isinstance(msg, dict) else ""
+        if not content:
+            continue
+        if role in ("user", "human"):
+            users.append(content)
+        elif role in ("assistant", "ai"):
+            assistants.append(content)
+    return users, assistants
+
+
+def _archive_prior_drift(signal_text: str, project: str) -> int | None:
+    """Count prior archived sessions in the same project whose content contains
+    a similar correction phrase — longitudinal 'has this drift recurred' review.
+    Optional: needs psycopg2; returns None if the driver or server is absent."""
+    try:
+        import psycopg2  # optional — stdlib-only guarantee preserved via lazy import
+    except Exception:
+        return None
+    frag = signal_text.strip()[:60]
+    if len(frag) < 8:
+        return None
+    try:
+        conn = psycopg2.connect(ARCHIVE_PG_DSN, connect_timeout=4)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT count(*) FROM sessions WHERE project = %s AND content ILIKE %s",
+                (project, f"%{frag}%"),
+            )
+            return int(cur.fetchone()[0])
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def tool_assess_turn(transcript_path: str, project_name: str = "",
+                     session_id: str = "") -> str:
+    """
+    Assess the just-completed turn for house-convention drift and stage
+    phase-appropriate reminder CANDIDATES for the next turn's injection.
+
+    The model lab trains in defaults that diverge from this operator's SOPs;
+    the highest-signal evidence that one surfaced is an operator correction in
+    the turn. This reads the transcript, classifies the turn's SDLC phase,
+    extracts operator-correction signals, optionally reviews the postgres
+    `claude_archive` for whether the same drift recurred before, and appends
+    candidates (with provenance) to `PHASE_REMINDERS.auto.md` beside the curated
+    `PHASE_REMINDERS.md`. The curated file is operator-edited only — promotion
+    from the auto pool is a human decision via the sesh editing interface.
+    """
+    tpath = Path(transcript_path).expanduser()
+    users, assistants = _read_transcript(tpath)
+    turn_text = "\n".join(users[-4:] + assistants[-2:])
+    phase = _classify_phase(turn_text) or "GENERAL"
+
+    # Operator-correction signals in the most recent user turns.
+    candidates: list[dict] = []
+    for u in users[-6:]:
+        low = u.lower()
+        if any(sig in low for sig in CORRECTION_SIGNALS):
+            snippet = " ".join(u.split())[:240]
+            prior = _archive_prior_drift(snippet, project_name)
+            candidates.append({
+                "phase": _classify_phase(u) or phase,
+                "correction": snippet,
+                "prior_occurrences": prior,
+            })
+
+    auto_path = SESH_SKILL_DIR / "PHASE_REMINDERS.auto.md"
+    written = 0
+    if candidates:
+        try:
+            SESH_SKILL_DIR.mkdir(parents=True, exist_ok=True)
+            header_needed = not auto_path.exists()
+            with auto_path.open("a", encoding="utf-8") as fh:
+                if header_needed:
+                    fh.write(
+                        "# PHASE_REMINDERS.auto — machine-staged candidates\n\n"
+                        "Appended by session-continuity-mcp `assess_turn` (post-turn "
+                        "hook). These are CANDIDATES only — the curated "
+                        "`PHASE_REMINDERS.md` is operator-edited. Promote via the sesh "
+                        "editing interface; delete what doesn't earn its place.\n\n"
+                        "Each entry: when · session · phase · provenance · candidate.\n\n"
+                    )
+                for c in candidates:
+                    prov = (f"prior_occurrences={c['prior_occurrences']}"
+                            if c["prior_occurrences"] is not None
+                            else "prior_occurrences=unknown(no archive)")
+                    fh.write(
+                        f"## [{c['phase']}] {_now()}\n"
+                        f"- session: `{session_id or 'unknown'}` · project: "
+                        f"`{project_name or 'unknown'}` · {prov}\n"
+                        f"- operator correction (verbatim, provenance): "
+                        f"{c['correction']}\n"
+                        f"- candidate reminder (draft — refine before promoting): "
+                        f"honor the correction above as a standing {c['phase']}-phase "
+                        f"rule if it recurs.\n\n"
+                    )
+                    written += 1
+        except Exception as e:
+            return json.dumps({"ok": False, "error": f"write failed: {e}",
+                               "phase": phase})
+
+    return json.dumps({
+        "ok": True,
+        "phase": phase,
+        "user_turns": len(users),
+        "assistant_turns": len(assistants),
+        "candidates_written": written,
+        "auto_file": str(auto_path),
+        "note": "candidates staged; curated PHASE_REMINDERS.md untouched",
+    })
+
+
 def tool_list_projects() -> str:
     ctx_db = open_context_db()
     rows = ctx_db.execute(
@@ -1114,6 +1346,27 @@ TOOLS = [
             "required": ["project_name", "summary"],
         },
     },
+    {
+        "name": "assess_turn",
+        "description": (
+            "Assess the just-completed turn for house-convention drift and stage "
+            "phase-appropriate reminder candidates for the next turn's injection. "
+            "Reads the transcript, classifies the SDLC phase, extracts operator "
+            "corrections, optionally reviews the postgres claude_archive for repeat "
+            "drift, and appends candidates (with provenance) to "
+            "PHASE_REMINDERS.auto.md. Curated PHASE_REMINDERS.md is never auto-edited. "
+            "Intended to be called by the post-turn (Stop) hook."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "transcript_path": {"type": "string", "description": "Path to the turn/session transcript (Claude Code JSONL)"},
+                "project_name":    {"type": "string", "description": "Project name (for archive review + provenance)"},
+                "session_id":      {"type": "string", "description": "Session id (provenance)"},
+            },
+            "required": ["transcript_path"],
+        },
+    },
 ]
 
 
@@ -1188,6 +1441,12 @@ def dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
                 arguments.get("checklist_progress"),
                 arguments.get("session_id"),
             )
+        elif name == "assess_turn":
+            return tool_assess_turn(
+                arguments["transcript_path"],
+                arguments.get("project_name", ""),
+                arguments.get("session_id", ""),
+            )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except KeyError as e:
@@ -1261,5 +1520,18 @@ def main() -> None:
             send_error(req_id, -32601, f"Method not found: {method}")
 
 
+def _cli() -> bool:
+    """Non-MCP CLI modes for hook invocation. Returns True if a mode ran."""
+    if len(sys.argv) >= 2 and sys.argv[1] == "--assess-turn":
+        # Usage: server.py --assess-turn <transcript_path> [project] [session_id]
+        transcript = sys.argv[2] if len(sys.argv) > 2 else ""
+        project    = sys.argv[3] if len(sys.argv) > 3 else ""
+        session    = sys.argv[4] if len(sys.argv) > 4 else ""
+        print(tool_assess_turn(transcript, project, session))
+        return True
+    return False
+
+
 if __name__ == "__main__":
-    main()
+    if not _cli():
+        main()
