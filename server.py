@@ -68,6 +68,23 @@ CORRECTION_SIGNALS = [
     "stop", "wrong", "incorrect", "revert", "undo", "why is", "why are",
     "you should", "never ", "always ", "that's not", "shouldn't",
 ]
+# Harness-injected wrapper blocks that are NOT operator speech — a caveat, a
+# slash-command echo, a system reminder or task notification. Their text often
+# contains correction-like words ("DO NOT respond…") and must never be mistaken
+# for an operator correction.
+NOISE_MARKERS = [
+    "<local-command-caveat>", "<command-name>", "<command-message>",
+    "<command-args>", "<system-reminder>", "<task-notification>",
+    "[system notification", "this is how claude code surfaces",
+    "caveat: the messages below were generated",
+]
+
+
+def _is_harness_noise(text: str) -> bool:
+    """True if a 'user' message is dominated by harness scaffolding rather than
+    operator speech. Such turns must be excluded from correction detection."""
+    low = text.lower().lstrip()
+    return any(low.startswith(m) or m in low[:200] for m in NOISE_MARKERS)
 
 # Pieces FTS tables (backslash table names — must use Python sqlite3, not CLI)
 EVENTS_FTS   = r"kv_.workstream\Events::workstream\Events\Full\Text\Search\Index_content"
@@ -1043,9 +1060,13 @@ def tool_assess_turn(transcript_path: str, project_name: str = "",
     turn_text = "\n".join(users[-4:] + assistants[-2:])
     phase = _classify_phase(turn_text) or "GENERAL"
 
-    # Operator-correction signals in the most recent user turns.
+    # Operator-correction signals in the most recent user turns. Harness-injected
+    # wrapper blocks (caveats, slash-command echoes, system reminders) are
+    # excluded — their "DO NOT…" boilerplate is not an operator correction.
     candidates: list[dict] = []
     for u in users[-6:]:
+        if _is_harness_noise(u):
+            continue
         low = u.lower()
         if any(sig in low for sig in CORRECTION_SIGNALS):
             snippet = " ".join(u.split())[:240]
