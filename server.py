@@ -1168,7 +1168,8 @@ CREATE INDEX IF NOT EXISTS task_ledger_session_idx ON task_ledger (session_id);
 CREATE INDEX IF NOT EXISTS task_ledger_commit_idx ON task_ledger (commit_hash);
 CREATE INDEX IF NOT EXISTS task_ledger_actor_idx ON task_ledger (actor_id);
 CREATE INDEX IF NOT EXISTS task_ledger_event_idx ON task_ledger (event);
-CREATE OR REPLACE VIEW task_provenance AS
+DROP VIEW IF EXISTS task_provenance;
+CREATE VIEW task_provenance AS
 SELECT project, task_id,
   max(artifact)        FILTER (WHERE artifact <> '')       AS artifact,
   max(actor_id)        FILTER (WHERE event = 'formulated') AS formulated_by,
