@@ -1123,6 +1123,127 @@ def tool_assess_turn(transcript_path: str, project_name: str = "",
     })
 
 
+# ── Task provenance ledger (Postgres claude_archive) ───────────────────────────
+#
+# The four-stage marker system ([ ] Task → [/] Undertaken → [X] Completed →
+# ✅ Orchestrator-semantically-validated) rests on cross-attestation: each of
+# Orchestrator, Architect, Coder assigns work to a group other than itself, and
+# each's work is checked by other than itself. This ledger correlates every
+# artifact through every step of its formulation and existence, each step
+# signed by its distinct actor — searchable/indexable in Postgres.
+
+TASK_LEDGER_EVENTS = ("formulated", "assigned", "undertaken", "completed",
+                      "validated", "rejected")
+TASK_LEDGER_ROLES = ("orchestrator", "architect", "coder")
+
+TASK_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS task_ledger (
+    id                bigserial PRIMARY KEY,
+    project           text NOT NULL,
+    task_id           text NOT NULL,
+    artifact          text NOT NULL DEFAULT '',
+    event             text NOT NULL,
+    actor_role        text NOT NULL,
+    actor_id          text NOT NULL DEFAULT '',
+    counterparty_role text NOT NULL DEFAULT '',
+    counterparty_id   text NOT NULL DEFAULT '',
+    detail            jsonb,
+    created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS task_ledger_project_task_idx ON task_ledger (project, task_id);
+CREATE INDEX IF NOT EXISTS task_ledger_actor_idx ON task_ledger (actor_id);
+CREATE INDEX IF NOT EXISTS task_ledger_event_idx ON task_ledger (event);
+CREATE OR REPLACE VIEW task_provenance AS
+SELECT project, task_id,
+  max(artifact)        FILTER (WHERE artifact <> '')       AS artifact,
+  max(actor_id)        FILTER (WHERE event = 'formulated') AS formulated_by,
+  max(actor_id)        FILTER (WHERE event = 'assigned')   AS assigned_by,
+  max(counterparty_id) FILTER (WHERE event = 'assigned')   AS assigned_to,
+  max(actor_id)        FILTER (WHERE event = 'undertaken') AS undertaken_by,
+  max(actor_id)        FILTER (WHERE event = 'completed')  AS completed_by,
+  max(actor_id)        FILTER (WHERE event = 'validated')  AS attested_by,
+  (array_agg(event ORDER BY created_at DESC))[1]           AS current_state,
+  min(created_at) AS first_event,
+  max(created_at) AS last_event
+FROM task_ledger
+GROUP BY project, task_id;
+"""
+
+
+def _ledger_conn():
+    """Postgres connection to claude_archive with the ledger schema ensured.
+    Lazy psycopg2 import preserves the stdlib-only guarantee for MCP paths
+    that don't touch the ledger. Raises on unavailability — provenance writes
+    must fail loudly, never silently."""
+    import psycopg2  # lazy — same pattern as _archive_prior_drift
+    conn = psycopg2.connect(ARCHIVE_PG_DSN, connect_timeout=6)
+    with conn.cursor() as cur:
+        cur.execute(TASK_LEDGER_DDL)
+    conn.commit()
+    return conn
+
+
+def tool_task_event(project: str, task_id: str, event: str, actor_role: str,
+                    actor_id: str = "", artifact: str = "",
+                    counterparty_role: str = "", counterparty_id: str = "",
+                    detail: dict | None = None) -> str:
+    """Append one provenance event for a task to the Postgres task_ledger."""
+    if event not in TASK_LEDGER_EVENTS:
+        return json.dumps({"ok": False,
+                           "error": f"event must be one of {TASK_LEDGER_EVENTS}"})
+    if actor_role not in TASK_LEDGER_ROLES:
+        return json.dumps({"ok": False,
+                           "error": f"actor_role must be one of {TASK_LEDGER_ROLES}"})
+    try:
+        conn = _ledger_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO task_ledger
+                       (project, task_id, artifact, event, actor_role, actor_id,
+                        counterparty_role, counterparty_id, detail)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at""",
+                    (project, task_id, artifact, event, actor_role, actor_id,
+                     counterparty_role, counterparty_id,
+                     json.dumps(detail) if detail else None),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return json.dumps({"ok": True, "ledger_id": row[0],
+                               "created_at": str(row[1]), "project": project,
+                               "task_id": task_id, "event": event,
+                               "actor_role": actor_role, "actor_id": actor_id})
+        finally:
+            conn.close()
+    except Exception as e:
+        return json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"})
+
+
+def tool_task_provenance(project: str, task_id: str = "") -> str:
+    """Query the task_provenance view: full formulation→attestation trail."""
+    try:
+        conn = _ledger_conn()
+        try:
+            with conn.cursor() as cur:
+                if task_id:
+                    cur.execute(
+                        "SELECT * FROM task_provenance WHERE project=%s AND task_id=%s",
+                        (project, task_id))
+                else:
+                    cur.execute(
+                        "SELECT * FROM task_provenance WHERE project=%s ORDER BY task_id",
+                        (project,))
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, (str(v) if v is not None else None for v in r)))
+                        for r in cur.fetchall()]
+            return json.dumps({"ok": True, "project": project, "count": len(rows),
+                               "tasks": rows})
+        finally:
+            conn.close()
+    except Exception as e:
+        return json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"})
+
+
 def tool_list_projects() -> str:
     ctx_db = open_context_db()
     rows = ctx_db.execute(
@@ -1388,6 +1509,48 @@ TOOLS = [
             "required": ["transcript_path"],
         },
     },
+    {
+        "name": "task_event",
+        "description": (
+            "Append one provenance event for a CHECKLIST task to the Postgres task_ledger "
+            "(claude_archive). Events mirror the four-stage marker system: formulated "
+            "(architect authors the [ ] task) → assigned (orchestrator → coder; "
+            "counterparty_id = coder session) → undertaken ([/], coder acknowledges) → "
+            "completed ([X], coder) → validated (✅, orchestrator semantic sign-off) | "
+            "rejected. Cross-attestation: no role records validation of its own execution."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project":           {"type": "string"},
+                "task_id":           {"type": "string", "description": "e.g. Tcontracts-3"},
+                "event":             {"type": "string", "enum": ["formulated", "assigned", "undertaken", "completed", "validated", "rejected"]},
+                "actor_role":        {"type": "string", "enum": ["orchestrator", "architect", "coder"]},
+                "actor_id":          {"type": "string", "description": "Session/seat id of the actor"},
+                "artifact":          {"type": "string", "description": "File/entity the task formulates"},
+                "counterparty_role": {"type": "string"},
+                "counterparty_id":   {"type": "string", "description": "e.g. assigned-to coder session id"},
+                "detail":            {"type": "object"},
+            },
+            "required": ["project", "task_id", "event", "actor_role"],
+        },
+    },
+    {
+        "name": "task_provenance",
+        "description": (
+            "Query the task_provenance view: per task, who formulated / assigned / "
+            "undertook / completed / attested it, current state, first/last event times. "
+            "Omit task_id for the whole project."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "task_id": {"type": "string"},
+            },
+            "required": ["project"],
+        },
+    },
 ]
 
 
@@ -1468,6 +1631,23 @@ def dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
                 arguments.get("project_name", ""),
                 arguments.get("session_id", ""),
             )
+        elif name == "task_event":
+            return tool_task_event(
+                arguments["project"],
+                arguments["task_id"],
+                arguments["event"],
+                arguments["actor_role"],
+                arguments.get("actor_id", ""),
+                arguments.get("artifact", ""),
+                arguments.get("counterparty_role", ""),
+                arguments.get("counterparty_id", ""),
+                arguments.get("detail"),
+            )
+        elif name == "task_provenance":
+            return tool_task_provenance(
+                arguments["project"],
+                arguments.get("task_id", ""),
+            )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except KeyError as e:
@@ -1542,13 +1722,41 @@ def main() -> None:
 
 
 def _cli() -> bool:
-    """Non-MCP CLI modes for hook invocation. Returns True if a mode ran."""
+    """Non-MCP CLI modes for hook/orchestrator invocation. True if a mode ran."""
     if len(sys.argv) >= 2 and sys.argv[1] == "--assess-turn":
         # Usage: server.py --assess-turn <transcript_path> [project] [session_id]
         transcript = sys.argv[2] if len(sys.argv) > 2 else ""
         project    = sys.argv[3] if len(sys.argv) > 3 else ""
         session    = sys.argv[4] if len(sys.argv) > 4 else ""
         print(tool_assess_turn(transcript, project, session))
+        return True
+    if len(sys.argv) >= 2 and sys.argv[1] == "--task-event":
+        # Usage: server.py --task-event <project> <task_id> <event> <actor_role>
+        #        [actor_id] [artifact] [counterparty_role] [counterparty_id] [detail-json]
+        a = sys.argv[2:]
+        if len(a) < 4:
+            print(json.dumps({"ok": False, "error": "need project task_id event actor_role"}))
+            return True
+        detail = None
+        if len(a) > 8 and a[8]:
+            try:
+                detail = json.loads(a[8])
+            except json.JSONDecodeError:
+                detail = {"note": a[8]}
+        print(tool_task_event(
+            a[0], a[1], a[2], a[3],
+            a[4] if len(a) > 4 else "",
+            a[5] if len(a) > 5 else "",
+            a[6] if len(a) > 6 else "",
+            a[7] if len(a) > 7 else "",
+            detail,
+        ))
+        return True
+    if len(sys.argv) >= 2 and sys.argv[1] == "--task-provenance":
+        # Usage: server.py --task-provenance <project> [task_id]
+        project = sys.argv[2] if len(sys.argv) > 2 else ""
+        task    = sys.argv[3] if len(sys.argv) > 3 else ""
+        print(tool_task_provenance(project, task))
         return True
     return False
 
