@@ -1150,7 +1150,22 @@ CREATE TABLE IF NOT EXISTS task_ledger (
     detail            jsonb,
     created_at        timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS session_id        text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignor_llm      text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignor_harness  text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignor_version  text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignee_llm      text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignee_harness  text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignee_version  text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS assignee_session  text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS started_at        timestamptz;
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS description       text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS ended_at          timestamptz;
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS commit_hash       text NOT NULL DEFAULT '';
+ALTER TABLE task_ledger ADD COLUMN IF NOT EXISTS commit_url        text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS task_ledger_project_task_idx ON task_ledger (project, task_id);
+CREATE INDEX IF NOT EXISTS task_ledger_session_idx ON task_ledger (session_id);
+CREATE INDEX IF NOT EXISTS task_ledger_commit_idx ON task_ledger (commit_hash);
 CREATE INDEX IF NOT EXISTS task_ledger_actor_idx ON task_ledger (actor_id);
 CREATE INDEX IF NOT EXISTS task_ledger_event_idx ON task_ledger (event);
 CREATE OR REPLACE VIEW task_provenance AS
@@ -1162,6 +1177,11 @@ SELECT project, task_id,
   max(actor_id)        FILTER (WHERE event = 'undertaken') AS undertaken_by,
   max(actor_id)        FILTER (WHERE event = 'completed')  AS completed_by,
   max(actor_id)        FILTER (WHERE event = 'validated')  AS attested_by,
+  max(commit_hash)     FILTER (WHERE commit_hash <> '')     AS commit_hash,
+  max(commit_url)      FILTER (WHERE commit_url <> '')      AS commit_url,
+  max(description)     FILTER (WHERE description <> '')     AS description,
+  min(started_at)                                           AS started_at,
+  max(ended_at)                                             AS ended_at,
   (array_agg(event ORDER BY created_at DESC))[1]           AS current_state,
   min(created_at) AS first_event,
   max(created_at) AS last_event
@@ -1186,7 +1206,7 @@ def _ledger_conn():
 def tool_task_event(project: str, task_id: str, event: str, actor_role: str,
                     actor_id: str = "", artifact: str = "",
                     counterparty_role: str = "", counterparty_id: str = "",
-                    detail: dict | None = None) -> str:
+                    detail: dict | None = None, extras: dict | None = None) -> str:
     """Append one provenance event for a task to the Postgres task_ledger."""
     if event not in TASK_LEDGER_EVENTS:
         return json.dumps({"ok": False,
@@ -1198,14 +1218,24 @@ def tool_task_event(project: str, task_id: str, event: str, actor_role: str,
         conn = _ledger_conn()
         try:
             with conn.cursor() as cur:
+                e = extras or {}
                 cur.execute(
                     """INSERT INTO task_ledger
                        (project, task_id, artifact, event, actor_role, actor_id,
-                        counterparty_role, counterparty_id, detail)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at""",
+                        counterparty_role, counterparty_id, detail,
+                        session_id, assignor_llm, assignor_harness, assignor_version,
+                        assignee_llm, assignee_harness, assignee_version, assignee_session,
+                        started_at, description, ended_at, commit_hash, commit_url)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       RETURNING id, created_at""",
                     (project, task_id, artifact, event, actor_role, actor_id,
                      counterparty_role, counterparty_id,
-                     json.dumps(detail) if detail else None),
+                     json.dumps(detail) if detail else None,
+                     e.get("session_id",""), e.get("assignor_llm",""), e.get("assignor_harness",""),
+                     e.get("assignor_version",""), e.get("assignee_llm",""), e.get("assignee_harness",""),
+                     e.get("assignee_version",""), e.get("assignee_session",""),
+                     e.get("started_at"), e.get("description",""), e.get("ended_at"),
+                     e.get("commit_hash",""), e.get("commit_url","")),
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -1743,13 +1773,19 @@ def _cli() -> bool:
                 detail = json.loads(a[8])
             except json.JSONDecodeError:
                 detail = {"note": a[8]}
+        extras = None
+        if len(a) > 9 and a[9]:
+            try:
+                extras = json.loads(a[9])
+            except json.JSONDecodeError:
+                extras = None
         print(tool_task_event(
             a[0], a[1], a[2], a[3],
             a[4] if len(a) > 4 else "",
             a[5] if len(a) > 5 else "",
             a[6] if len(a) > 6 else "",
             a[7] if len(a) > 7 else "",
-            detail,
+            detail, extras,
         ))
         return True
     if len(sys.argv) >= 2 and sys.argv[1] == "--task-provenance":
